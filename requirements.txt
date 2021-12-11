@@ -1,0 +1,3 @@
+dulwich
+pygithub
+tqdm
