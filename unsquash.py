@@ -29,6 +29,7 @@ class PullRequestDatabase:
     def __enter__(self):
         self.db = sqlite3.connect(self.db_path)
         self.db.executescript("""
+        PRAGMA journal_mode = WAL;
         CREATE TABLE IF NOT EXISTS pull_requests(
             id INTEGER PRIMARY KEY,
             commits_json TEXT NOT NULL
@@ -75,7 +76,7 @@ class PullRequestDatabase:
         with self.db as cursor:
             # save all the commit data in the database
             cursor.executemany("""
-                INSERT INTO commits(id, json) VALUES (?, ?);
+                INSERT OR IGNORE INTO commits(id, json) VALUES (?, ?);
             """, gen_commits())
 
             # save the PR itself including its list of commits in the database
