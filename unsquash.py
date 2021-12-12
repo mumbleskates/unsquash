@@ -144,6 +144,8 @@ def main():
     parser.add_argument("--unsquashed_committer", type=str,
                         default="UnsquashBot <unsquashbot@example.com>",
                         help="The committer line for the bot")
+    parser.add_argument("--token_file", type=str, default=None,
+                        help="File to read the github token from")
     args = parser.parse_args()
     bot_email = args.unsquashed_committer.encode()
 
@@ -165,10 +167,16 @@ def main():
         print(f"Squashed branch {repr(args.squashed_branch)} not found!")
         sys.exit(1)
 
+    if args.token_file is None:
+        token = getpass(prompt="github token: ")
+    else:
+        with open(args.token_file, 'r') as f:
+            token = f.read().strip()
+
     with PullRequestDatabase(
             db_path=args.pr_db,
             github_repo_name=args.github_repo,
-            github_token=getpass(prompt="github token: ")) as pr_db:
+            github_token=token) as pr_db:
         commit_stack = []
         for walk in tqdm(repo.get_walker(squashed_head),
                          desc="crawling squashed branch", unit=" commits"):
