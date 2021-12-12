@@ -47,7 +47,8 @@ class PullRequestDatabase:
             """, (pull_request_id,))
             return json.loads(json_data), True
         except ValueError:
-            return self._fetch(pull_request_id), False
+            pass
+        return self._fetch(pull_request_id), False
 
     def commit(self, commit_id):
         try:
