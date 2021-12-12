@@ -182,7 +182,7 @@ def main():
         rewrite_progress = tqdm(total=len(commit_stack),
                                 desc="unsquashing commits", unit=" commits")
         pr_progress = tqdm(total=expected_squash_commits,
-                           desc="squashed prs    ", unit=" prs")
+                           desc="squashed prs", unit=" prs")
         fetch_commit_progress = tqdm(desc="fetching commits", unit=" commits")
         while commit_stack:
             rewrite_progress.update()
