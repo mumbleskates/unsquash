@@ -169,34 +169,38 @@ def main():
             db_path=args.pr_db,
             github_repo_name=args.github_repo,
             github_token=getpass(prompt="github token: ")) as pr_db:
-        for walk in tqdm(repo.get_walker(squashed_head, reverse=True),
+        commit_stack = []
+        for walk in tqdm(repo.get_walker(squashed_head),
                          desc="crawling squashed branch", unit=" commits"):
-            if walk.commit.id in unsquashed_mapping:
-                continue  # this commit has already been unsquashed
-            pull_request_id = detect_original_commit(walk.commit)
+            if walk.commit.id not in unsquashed_mapping:
+                commit_stack.append(walk.commit.id)
+        print(f"Found {len(commit_stack)} commits to unsquash")
+        while commit_stack:
+            current_commit = commit_stack.pop()
+            pull_request_id = detect_github_squash_commit(current_commit)
             if pull_request_id is not None:
+                # TODO: we are only fetching from the api for now
                 pr_commits = pr_db.pull_request_commits(pull_request_id)
-                # TODO: somehow remap all these commits as well by the same
-                #  process
-            elif all(unsquashed_mapping.get(parent, default=parent) == parent
-                     for parent in walk.commit.parents):
-                continue  # this commit's exactly the same in unsquashed history
+            # TODO: remap commits
+            # elif all(unsquashed_mapping.get(parent, default=parent) == parent
+            #          for parent in walk.commit.parents):
+            #     continue  # this commit's exactly the same in unsquashed history
 
-            # build unsquashed commit object
-            rewrite = walk.commit.copy()
-            rewrite.message = b''.join([
-                walk.commit.message,
-                b'\n' * (not walk.commit.message.endswith(b'\n')),
-                b'unsquashbot_original_commit=',
-                walk.commit.id,
-                b'\n',
-            ])
-            rewrite.committer = bot_email
-
-            rewrite.parents = [
-                unsquashed_mapping.get(parent, default=parent)
-                for parent in walk.commit.parents
-            ]
+            # # build unsquashed commit object
+            # rewrite = walk.commit.copy()
+            # rewrite.message = b''.join([
+            #     walk.commit.message,
+            #     b'\n' * (not walk.commit.message.endswith(b'\n')),
+            #     b'unsquashbot_original_commit=',
+            #     walk.commit.id,
+            #     b'\n',
+            # ])
+            # rewrite.committer = bot_email
+            #
+            # rewrite.parents = [
+            #     unsquashed_mapping.get(parent, default=parent)
+            #     for parent in walk.commit.parents
+            # ]
 
 
 if __name__ == '__main__':
