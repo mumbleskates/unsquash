@@ -46,13 +46,17 @@ class PullRequestDatabase:
         self.db = None
 
     def pull_request_commits(self, pull_request_id):
+        """
+        Returns (list of pull request commit ids, bool of whether this pr
+        was cached.
+        """
         try:
             [[json_data]] = self.db.execute("""
                 SELECT commits_json FROM pull_requests WHERE id = ?;
             """, (pull_request_id,))
-            return json.loads(json_data)
+            return json.loads(json_data), True
         except ValueError:
-            return self._fetch(pull_request_id)
+            return self._fetch(pull_request_id), False
 
     def commit(self, commit_id):
         try:
@@ -198,9 +202,13 @@ def main():
             pull_request_id = detect_github_squash_commit(current_commit)
             if pull_request_id is not None:
                 # TODO: we are only fetching from the api for now
-                pr_commits = pr_db.pull_request_commits(pull_request_id)
-                fetch_pr_progress.update(1)
-                fetch_commit_progress.update(len(pr_commits))
+                pr_commits, was_cached = (
+                    pr_db.pull_request_commits(pull_request_id))
+                if not was_cached:
+                    fetch_pr_progress.update(1)
+                    fetch_commit_progress.update(len(pr_commits))
+                    fetch_pr_progress.refresh()
+                    fetch_commit_progress.refresh()
                 # TODO: rewrite_progress.total += len(pr_commits)
             # TODO: remap commits
             # elif all(unsquashed_mapping.get(parent, default=parent) == parent
