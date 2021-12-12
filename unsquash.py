@@ -134,7 +134,7 @@ def main():
     parser = argparse.ArgumentParser(description="Download pull request info")
     parser.add_argument("--repo", type=str, required=True,
                         help="The file path to the local git repo")
-    parser.add_argument("--pr_db", type=str, default="pull_requests.jsonl",
+    parser.add_argument("--pr_db", type=str, default="pull_requests.db",
                         help="The file path to the pull requests cache")
     parser.add_argument("--squashed_branch", type=str, required=True,
                         help="The name of the branch to be unsquashed")
