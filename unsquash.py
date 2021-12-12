@@ -186,13 +186,17 @@ def main():
             if walk.commit.id not in unsquashed_mapping:
                 commit_stack.append(walk.commit.id)
         print(f"Found {len(commit_stack)} commits to unsquash")
+        rewrite_progress = tqdm(total=len(commit_stack),
+                                desc="unsquashing commits", unit=" commits")
         while commit_stack:
+            rewrite_progress.update()
             current_commit_id = commit_stack.pop()
             current_commit = repo[current_commit_id]
             pull_request_id = detect_github_squash_commit(current_commit)
             if pull_request_id is not None:
                 # TODO: we are only fetching from the api for now
                 pr_commits = pr_db.pull_request_commits(pull_request_id)
+                # TODO: rewrite_progress.total += len(pr_commits)
             # TODO: remap commits
             # elif all(unsquashed_mapping.get(parent, default=parent) == parent
             #          for parent in walk.commit.parents):
