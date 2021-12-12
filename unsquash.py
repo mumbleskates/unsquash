@@ -84,8 +84,8 @@ class PullRequestDatabase:
                 INSERT INTO pull_requests(id, commits_json) VALUES (?, ?);
             """, (pull_request_id, json.dumps(commits)))
 
-        print(f"fetched uncached github PR {pull_request_id} "
-              f"with {len(commits)} commits")
+        # print(f"fetched uncached github PR {pull_request_id} "
+        #       f"with {len(commits)} commits")
         return [c.encode() for c in commits]
 
 
