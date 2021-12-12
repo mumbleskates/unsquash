@@ -180,7 +180,7 @@ def main():
                 if detect_github_squash_commit(walk.commit):
                     expected_squash_commits += 1
         rewrite_progress = tqdm(total=len(commit_stack),
-                                desc="unsquashing commits", unit=" commits")
+                                desc="unsquashing ", unit=" commits")
         pr_progress = tqdm(total=expected_squash_commits,
                            desc="squashed prs", unit=" prs")
         fetch_commit_progress = tqdm(desc="fetching commits", unit=" commits")
