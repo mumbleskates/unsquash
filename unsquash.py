@@ -113,7 +113,7 @@ def map_unsquashed_branch(repo, head):
     unsquashed_mapping = {}
     num_rewritten = 0
     for walk in tqdm(repo.get_walker(head),
-                     desc="mapping unsquash branch", units=" commits"):
+                     desc="mapping unsquash branch", units=" commit"):
         original_commit_id = detect_original_commit(walk.commit)
         if original_commit_id:
             unsquashed_mapping[original_commit_id] = walk.commit.id
@@ -177,15 +177,14 @@ def main():
             github_token=token) as pr_db:
         commit_stack = []
         for walk in tqdm(repo.get_walker(squashed_head),
-                         desc="crawling squashed branch", unit=" commits"):
+                         desc="crawling squashed branch", unit=" commit"):
             if walk.commit.id not in unsquashed_mapping:
                 commit_stack.append(walk.commit.id)
         print(f"Found {len(commit_stack)} commits to unsquash")
         rewrite_progress = tqdm(total=len(commit_stack),
-                                desc="unsquashing commits", unit=" commits")
-        fetch_pr_progress = tqdm(desc="fetching prs", unit="prs")
-        fetch_commit_progress = tqdm(desc="  fetching pr commits",
-                                     unit=" commits")
+                                desc="unsquashing commits", unit=" commit")
+        fetch_pr_progress = tqdm(desc="fetching prs    ", unit=" pr")
+        fetch_commit_progress = tqdm(desc="fetching commits", unit=" commit")
         while commit_stack:
             rewrite_progress.update()
             current_commit_id = commit_stack.pop()
