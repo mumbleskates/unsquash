@@ -186,7 +186,8 @@ def main():
                 commit_stack.append(walk.commit.id)
         print(f"Found {len(commit_stack)} commits to unsquash")
         while commit_stack:
-            current_commit = commit_stack.pop()
+            current_commit_id = commit_stack.pop()
+            current_commit = repo[current_commit_id]
             pull_request_id = detect_github_squash_commit(current_commit)
             if pull_request_id is not None:
                 # TODO: we are only fetching from the api for now
