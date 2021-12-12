@@ -176,14 +176,18 @@ def main():
             github_repo_name=args.github_repo,
             github_token=token) as pr_db:
         commit_stack = []
+        expected_squash_commits = 0
         for walk in tqdm(repo.get_walker(squashed_head),
                          desc="crawling squashed branch", unit=" commit"):
             if walk.commit.id not in unsquashed_mapping:
                 commit_stack.append(walk.commit.id)
+                if detect_github_squash_commit(walk.commit):
+                    expected_squash_commits += 1
         print(f"Found {len(commit_stack)} commits to unsquash")
         rewrite_progress = tqdm(total=len(commit_stack),
                                 desc="unsquashing commits", unit=" commit")
-        fetch_pr_progress = tqdm(desc="fetching prs    ", unit=" pr")
+        pr_progress = tqdm(total=expected_squash_commits,
+                           desc="squashed prs    ", unit=" pr")
         fetch_commit_progress = tqdm(desc="fetching commits", unit=" commit")
         while commit_stack:
             rewrite_progress.update()
@@ -194,10 +198,10 @@ def main():
                 # TODO: we are only fetching from the api for now
                 pr_commits, was_cached = (
                     pr_db.pull_request_commits(pull_request_id))
+                pr_progress.update(1)
                 if not was_cached:
-                    fetch_pr_progress.update(1)
                     fetch_commit_progress.update(len(pr_commits))
-                    fetch_pr_progress.refresh()
+                    pr_progress.refresh()
                     fetch_commit_progress.refresh()
                 # TODO: rewrite_progress.total += len(pr_commits)
             # TODO: remap commits
