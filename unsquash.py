@@ -188,6 +188,9 @@ def main():
         print(f"Found {len(commit_stack)} commits to unsquash")
         rewrite_progress = tqdm(total=len(commit_stack),
                                 desc="unsquashing commits", unit=" commits")
+        fetch_pr_progress = tqdm(desc="fetching prs", unit="prs")
+        fetch_commit_progress = tqdm(desc="  fetching pr commits",
+                                     unit=" commits")
         while commit_stack:
             rewrite_progress.update()
             current_commit_id = commit_stack.pop()
@@ -196,6 +199,8 @@ def main():
             if pull_request_id is not None:
                 # TODO: we are only fetching from the api for now
                 pr_commits = pr_db.pull_request_commits(pull_request_id)
+                fetch_pr_progress.update(1)
+                fetch_commit_progress.update(len(pr_commits))
                 # TODO: rewrite_progress.total += len(pr_commits)
             # TODO: remap commits
             # elif all(unsquashed_mapping.get(parent, default=parent) == parent
