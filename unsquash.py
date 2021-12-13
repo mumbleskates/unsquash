@@ -175,7 +175,7 @@ def main():
         commit_stack = []
         expected_squash_commits = 0
         for walk in tqdm(repo.get_walker(squashed_head),
-                         desc="crawling squashed branch", unit=" commits"):
+                         desc="crawling squashed branch", unit="commit"):
             if walk.commit.id not in unsquashed_mapping:
                 commit_stack.append(walk.commit.id)
                 if detect_github_squash_commit(walk.commit):
@@ -187,7 +187,6 @@ def main():
                 tqdm(desc="fetching commits",
                      unit="commit") as fetch_commit_progress:
             while commit_stack:
-                rewrite_progress.update()
                 current_commit_id = commit_stack.pop()
                 current_commit = repo[current_commit_id]
                 pull_request_id = detect_github_squash_commit(current_commit)
@@ -221,6 +220,7 @@ def main():
                 #     unsquashed_mapping.get(parent, default=parent)
                 #     for parent in walk.commit.parents
                 # ]
+                rewrite_progress.update()
 
 
 if __name__ == '__main__':
