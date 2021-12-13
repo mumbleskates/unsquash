@@ -13,7 +13,7 @@ from dulwich.repo import Repo
 
 
 class GithubCache:
-    def __init__(self, db_path, github_repo_name, github_token):
+    def __init__(self, db_path: str, github_repo_name: str, github_token: str):
         self.github_repo = Github(github_token).get_repo(github_repo_name)
         self.db_path = db_path
         self.db = None
@@ -37,7 +37,7 @@ class GithubCache:
         self.db.close()
         self.db = None
 
-    def pull_request_commits(self, pull_request_id):
+    def pull_request_commits(self, pull_request_id: int) -> (list[bytes], bool):
         """
         Returns (list of pull request commit ids, bool of whether this pr
         was cached.
@@ -51,16 +51,16 @@ class GithubCache:
             pass
         return self._fetch_pr(pull_request_id), False
 
-    def object(self, object_id):
+    def object(self, object_id: bytes) -> dict[str, any]:
         try:
             [[json_data]] = self.db.execute("""
                 SELECT json FROM objects WHERE id = ?;
-            """, (object_id,))
+            """, (object_id.decode(),))
             return json.loads(json_data)
         except ValueError:
             raise KeyError("commit not in database", object_id)
 
-    def commit(self, commit_id):
+    def commit(self, commit_id: bytes) -> (dict[str, any], bool):
         """
         Returns (commit json, bool of whether this object was cached.
         """
@@ -71,7 +71,7 @@ class GithubCache:
                 pass
             return self._fetch_commit(commit_id, cursor), False
 
-    def tree(self, tree_id):
+    def tree(self, tree_id: bytes) -> (dict[str, any], bool):
         """
         Returns (tree json, bool of whether this object was cached.
         """
@@ -82,7 +82,7 @@ class GithubCache:
                 pass
             return self._fetch_tree(tree_id, cursor), False
 
-    def blob(self, blob_id):
+    def blob(self, blob_id: bytes) -> (dict[str, any], bool):
         """
         Returns (blob json, bool of whether this object was cached.
         """
@@ -93,7 +93,7 @@ class GithubCache:
                 pass
             return self._fetch_blob(blob_id, cursor), False
 
-    def _fetch_pr(self, pull_request_id):
+    def _fetch_pr(self, pull_request_id: int) -> list[bytes]:
         github_pull_request = self.github_repo.get_pull(pull_request_id)
         commits = []
 
@@ -116,15 +116,15 @@ class GithubCache:
 
         return [c.encode() for c in commits]
 
-    def _fetch_commit(self, commit_id, cursor):
-        github_commit = self.github_repo.get_git_commit(commit_id)
+    def _fetch_commit(self, commit_id: bytes, cursor) -> dict[str, any]:
+        github_commit = self.github_repo.get_git_commit(commit_id.decode())
         raw_data = github_commit.raw_data
         cursor.execute("""
             INSERT INTO objects(id, json) VALUES (?, ?);
         """, (github_commit.sha, json.dumps(raw_data)))
         return raw_data
 
-    def _fetch_tree(self, tree_id, cursor):
+    def _fetch_tree(self, tree_id, cursor) -> dict[str, any]:
         github_tree = self.github_repo.get_git_tree(tree_id)
         raw_data = github_tree.raw_data
         cursor.execute("""
@@ -132,7 +132,7 @@ class GithubCache:
         """, (github_tree.sha, json.dumps(raw_data)))
         return raw_data
 
-    def _fetch_blob(self, blob_id, cursor):
+    def _fetch_blob(self, blob_id, cursor) -> dict[str, any]:
         github_blob = self.github_repo.get_git_blob(blob_id)
         raw_data = github_blob.raw_data
         cursor.execute("""
@@ -141,7 +141,7 @@ class GithubCache:
         return raw_data
 
 
-def detect_github_squash_commit(commit):
+def detect_github_squash_commit(commit: Commit) -> int | None:
     """
     Returns the pull request number if this looks like a squash commit,
     otherwise returns None.
@@ -154,18 +154,17 @@ def detect_github_squash_commit(commit):
     return pr and int(pr.group(1))
 
 
-def detect_original_commit(commit):
+def detect_original_commit(commit: Commit) -> bytes | None:
     """
     Returns the commit id of the original commit if this is an unsquashed
     commit, otherwise returns None.
     """
     match = re.search(rb'\nunsquashbot_original_commit=([0-9a-f]+)\n$',
-                      commit.message,
-                      re.MULTILINE)
+                      commit.message, re.MULTILINE)
     return match and match.group(1)
 
 
-def map_unsquashed_branch(repo, head):
+def map_unsquashed_branch(repo, head: bytes):
     # mapping from original commit id to unsquashed branch commit id
     unsquashed_mapping = {}
     num_rewritten = 0
@@ -181,7 +180,7 @@ def map_unsquashed_branch(repo, head):
     return unsquashed_mapping
 
 
-def recreate_tree(tree_json):
+def recreate_tree(tree_json: dict[str, any]) -> Tree:
     """
     Recreate a tree object exactly from github api json.
     """
@@ -196,7 +195,7 @@ def recreate_tree(tree_json):
     return tree
 
 
-def recreate_blob(blob_json):
+def recreate_blob(blob_json: dict[str, any]) -> Blob:
     """
     Recreate a blob object exactly from github api json.
     """
@@ -268,7 +267,9 @@ def main():
                 tqdm(total=expected_squash_commits,
                      desc="squashed prs", unit="pr") as pr_progress, \
                 tqdm(desc="fetching commits",
-                     unit="commit") as fetch_commit_progress:
+                     unit="commit") as fetch_commit_progress, \
+                tqdm(desc="fetching missing objects",
+                     unit="obj") as fetch_obj_progress:
             while commit_stack:
                 current_commit_id = commit_stack.pop()
                 current_commit = repo[current_commit_id]
