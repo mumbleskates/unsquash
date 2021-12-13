@@ -205,6 +205,31 @@ def recreate_blob(blob_json: dict[str, any]) -> Blob:
     return blob
 
 
+def download_tree(repo: Repo, gh_db: GithubCache, tree_id: bytes,
+                  fetch_progress: tqdm) -> None:
+    """
+    Downlaod the tree and all its reachable objects into the repo from the
+    Github JSON api.
+    """
+    gh_tree, was_cached = gh_db.tree(tree_id)
+    if not was_cached:
+        fetch_progress.update(1)
+    for entry in gh_tree['tree']:
+        if entry['sha'].encode() in repo:
+            continue
+        if entry['type'] == 'blob':
+            gh_blob, was_cached = gh_db.blob(entry['sha'].encode())
+            if not was_cached:
+                fetch_progress.update(1)
+            repo.object_store.add_object(recreate_blob(gh_blob))
+        elif entry['type'] == 'tree':
+            download_tree(repo, gh_db, entry['sha'].encode(), fetch_progress)
+        else:
+            assert False, ("Unknown, absurd tree entry object type",
+                           entry['type'])
+    repo.object_store.add_object(recreate_tree(gh_tree))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Download pull request info")
     parser.add_argument("--repo", type=str, required=True,
