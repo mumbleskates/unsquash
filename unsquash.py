@@ -49,15 +49,15 @@ class GithubCache:
             pass
         return self._fetch_pr(pull_request_id), False
 
-    def object(self, commit_id):
+    def object(self, object_id):
         try:
             [[json_data]] = self.db.execute("""
                 SELECT json FROM objects WHERE id = ?;
-            """, (commit_id,))
+            """, (object_id,))
             return json.loads(json_data)
         except ValueError:
-            raise KeyError("commit not in database", commit_id)
-    
+            raise KeyError("commit not in database", object_id)
+
     def commit(self, commit_id):
         """
         Returns (commit json, bool of whether this object was cached.
