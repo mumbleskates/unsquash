@@ -125,7 +125,7 @@ class GithubCache:
         return raw_data
 
     def _fetch_tree(self, tree_id, cursor) -> dict[str, any]:
-        github_tree = self.github_repo.get_git_tree(tree_id)
+        github_tree = self.github_repo.get_git_tree(tree_id.decode())
         raw_data = github_tree.raw_data
         cursor.execute("""
             INSERT INTO objects(id, json) VALUES (?, ?);
@@ -133,7 +133,7 @@ class GithubCache:
         return raw_data
 
     def _fetch_blob(self, blob_id, cursor) -> dict[str, any]:
-        github_blob = self.github_repo.get_git_blob(blob_id)
+        github_blob = self.github_repo.get_git_blob(blob_id.decode())
         raw_data = github_blob.raw_data
         cursor.execute("""
             INSERT INTO objects(id, json) VALUES (?, ?);
