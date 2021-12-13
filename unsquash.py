@@ -20,15 +20,15 @@ class PullRequestDatabase:
     def __enter__(self):
         self.db = sqlite3.connect(self.db_path)
         self.db.executescript("""
-        PRAGMA journal_mode = WAL;
-        CREATE TABLE IF NOT EXISTS pull_requests(
-            id INTEGER PRIMARY KEY,
-            commits_json TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS commits(
-            id TEXT PRIMARY KEY,
-            json TEXT NOT NULL
-        ) WITHOUT ROWID;
+            PRAGMA journal_mode = WAL;
+            CREATE TABLE IF NOT EXISTS pull_requests(
+                id INTEGER PRIMARY KEY,
+                commits_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS commits(
+                id TEXT PRIMARY KEY,
+                json TEXT NOT NULL
+            ) WITHOUT ROWID;
         """)
         return self
 
