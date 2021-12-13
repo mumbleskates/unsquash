@@ -7,11 +7,10 @@ import sys
 from tqdm import tqdm
 
 from github import Github
-from dulwich.client import SSHGitClient
 from dulwich.repo import Repo
 
 
-class PullRequestDatabase:
+class GithubCache:
     def __init__(self, db_path, github_repo_name, github_token):
         self.github_repo = Github(github_token).get_repo(github_repo_name)
         self.db_path = db_path
@@ -19,13 +18,13 @@ class PullRequestDatabase:
 
     def __enter__(self):
         self.db = sqlite3.connect(self.db_path)
+        self.db.execute("""PRAGMA journal_mode = WAL;""")
         self.db.executescript("""
-            PRAGMA journal_mode = WAL;
             CREATE TABLE IF NOT EXISTS pull_requests(
                 id INTEGER PRIMARY KEY,
                 commits_json TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS commits(
+            CREATE TABLE IF NOT EXISTS objects(
                 id TEXT PRIMARY KEY,
                 json TEXT NOT NULL
             ) WITHOUT ROWID;
@@ -48,18 +47,51 @@ class PullRequestDatabase:
             return json.loads(json_data), True
         except ValueError:
             pass
-        return self._fetch(pull_request_id), False
+        return self._fetch_pr(pull_request_id), False
 
-    def commit(self, commit_id):
+    def object(self, commit_id):
         try:
             [[json_data]] = self.db.execute("""
-                SELECT json FROM commits WHERE id = ?;
+                SELECT json FROM objects WHERE id = ?;
             """, (commit_id,))
+            return json.loads(json_data)
         except ValueError:
             raise KeyError("commit not in database", commit_id)
-        return json.loads(json_data)
+    
+    def commit(self, commit_id):
+        """
+        Returns (commit json, bool of whether this object was cached.
+        """
+        with self.db as cursor:
+            try:
+                return self.object(commit_id), True
+            except KeyError:
+                pass
+            return self._fetch_commit(commit_id, cursor), False
 
-    def _fetch(self, pull_request_id):
+    def tree(self, tree_id):
+        """
+        Returns (tree json, bool of whether this object was cached.
+        """
+        with self.db as cursor:
+            try:
+                return self.object(tree_id), True
+            except KeyError:
+                pass
+            return self._fetch_tree(tree_id, cursor), False
+
+    def blob(self, blob_id):
+        """
+        Returns (blob json, bool of whether this object was cached.
+        """
+        with self.db as cursor:
+            try:
+                return self.object(blob_id), True
+            except KeyError:
+                pass
+            return self._fetch_blob(blob_id, cursor), False
+
+    def _fetch_pr(self, pull_request_id):
         github_pull_request = self.github_repo.get_pull(pull_request_id)
         commits = []
 
@@ -72,7 +104,7 @@ class PullRequestDatabase:
         with self.db as cursor:
             # save all the commit data in the database
             cursor.executemany("""
-                INSERT OR IGNORE INTO commits(id, json) VALUES (?, ?);
+                INSERT OR IGNORE INTO objects(id, json) VALUES (?, ?);
             """, gen_commits())
 
             # save the PR itself including its list of commits in the database
@@ -81,6 +113,30 @@ class PullRequestDatabase:
             """, (pull_request_id, json.dumps(commits)))
 
         return [c.encode() for c in commits]
+
+    def _fetch_commit(self, commit_id, cursor):
+        github_commit = self.github_repo.get_git_commit(commit_id)
+        raw_data = github_commit.raw_data
+        cursor.execute("""
+            INSERT INTO objects(id, json) VALUES (?, ?);
+        """, (github_commit.sha, json.dumps(raw_data)))
+        return raw_data
+
+    def _fetch_tree(self, tree_id, cursor):
+        github_tree = self.github_repo.get_git_tree(tree_id)
+        raw_data = github_tree.raw_data
+        cursor.execute("""
+            INSERT INTO objects(id, json) VALUES (?, ?);
+        """, (github_tree.sha, json.dumps(raw_data)))
+        return raw_data
+
+    def _fetch_blob(self, blob_id, cursor):
+        github_blob = self.github_repo.get_git_blob(blob_id)
+        raw_data = github_blob.raw_data
+        cursor.execute("""
+            INSERT INTO objects(id, json) VALUES (?, ?);
+        """, (github_blob.sha, json.dumps(raw_data)))
+        return raw_data
 
 
 def detect_github_squash_commit(commit):
@@ -168,10 +224,10 @@ def main():
         with open(args.token_file, 'r') as f:
             token = f.read().strip()
 
-    with PullRequestDatabase(
+    with GithubCache(
             db_path=args.pr_db,
             github_repo_name=args.github_repo,
-            github_token=token) as pr_db:
+            github_token=token) as gh_db:
         commit_stack = []
         expected_squash_commits = 0
         for walk in tqdm(repo.get_walker(squashed_head),
@@ -193,7 +249,7 @@ def main():
                 if pull_request_id is not None:
                     # TODO: we are only fetching from the api for now
                     pr_commits, was_cached = (
-                        pr_db.pull_request_commits(pull_request_id))
+                        gh_db.pull_request_commits(pull_request_id))
                     pr_progress.update(1)
                     if not was_cached:
                         fetch_commit_progress.update(len(pr_commits))
