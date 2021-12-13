@@ -191,7 +191,7 @@ def recreate_tree(tree_json: dict[str, any]) -> Tree:
         tree.add(name=tree_entry['path'].encode(),
                  mode=int(tree_entry['mode'], 8),
                  hexsha=tree_entry['sha'].encode())
-    assert tree.sha().hexdigest() == tree_json['sha']
+    assert tree.id == tree_json['sha'].encode()
     return tree
 
 
@@ -201,7 +201,7 @@ def recreate_blob(blob_json: dict[str, any]) -> Blob:
     """
     blob = Blob()
     blob.data = b64decode(blob_json['content'])  # it's always base64 encoded
-    assert blob.sha().hexdigest() == blob_json['sha']
+    assert blob.id == blob_json['sha'].encode()
     return blob
 
 
@@ -297,7 +297,7 @@ def main():
                                   unit="obj")
         while commit_stack:
             current_commit_id = commit_stack.pop()
-            current_commit = repo[current_commit_id]
+            current_commit = repo[current_commit_id]  # TODO: May fail!
             pull_request_id = detect_github_squash_commit(current_commit)
             if pull_request_id is not None:
                 # TODO: we are only fetching from the api for now
@@ -310,9 +310,6 @@ def main():
                     fetch_commit_progress.refresh()
                 # TODO: rewrite_progress.total += len(pr_commits)
             # TODO: remap commits
-            # elif all(unsquashed_mapping.get(parent, default=parent) == parent
-            #          for parent in walk.commit.parents):
-            #     continue  # this commit's exactly the same in unsquashed history
 
             # # build unsquashed commit object
             # rewrite = walk.commit.copy()
