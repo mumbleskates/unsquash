@@ -1,4 +1,5 @@
 import argparse
+from base64 import b64decode
 from getpass import getpass
 import json
 import re
@@ -7,6 +8,7 @@ import sys
 from tqdm import tqdm
 
 from github import Github
+from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import Repo
 
 
@@ -177,6 +179,31 @@ def map_unsquashed_branch(repo, head):
             # not rewritten, commit is unchanged
             unsquashed_mapping[walk.commit.id] = walk.commit.id
     return unsquashed_mapping
+
+
+def recreate_tree(tree_json):
+    """
+    Recreate a tree object exactly from github api json.
+    """
+    assert not tree_json['truncated'], (f"Tree {tree_json['sha']} from github "
+                                        f"was truncated!")
+    tree = Tree()
+    for tree_entry in tree_json['tree']:
+        tree.add(name=tree_entry['path'].encode(),
+                 mode=int(tree_entry['mode'], 8),
+                 hexsha=tree_entry['sha'].encode())
+    assert tree.sha().hexdigest() == tree_json['sha']
+    return tree
+
+
+def recreate_blob(blob_json):
+    """
+    Recreate a blob object exactly from github api json.
+    """
+    blob = Blob()
+    blob.data = b64decode(blob_json['content'])  # it's always base64 encoded
+    assert blob.sha().hexdigest() == blob_json['sha']
+    return blob
 
 
 def main():
