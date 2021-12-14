@@ -178,7 +178,7 @@ def map_unsquashed_branch(repo: Repo, head: bytes) -> dict[bytes, bytes]:
     unsquashed_mapping = {}
     num_rewritten = 0
     for walk in tqdm(repo.get_walker(head),
-                     desc="mapping unsquash branch", units="commit"):
+                     desc="mapping unsquash branch", unit="commit"):
         original_commit_id = detect_original_commit(walk.commit)
         if original_commit_id:
             unsquashed_mapping[original_commit_id] = walk.commit.id
