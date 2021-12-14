@@ -285,11 +285,10 @@ def main():
 
     unsquashed_ref = f"refs/heads/{args.unsquashed_branch}".encode()
     try:
-        unsquashed_head = repo.refs[unsquashed_ref]
-        unsquashed_mapping = map_unsquashed_branch(repo, unsquashed_head)
+        unsquashed_mapping = map_unsquashed_branch(repo,
+                                                   repo.refs[unsquashed_ref])
     except KeyError:
         print("Unsquashed branch does not yet exist")
-        unsquashed_head = None
         unsquashed_mapping = {}
 
     try:
@@ -348,18 +347,23 @@ def main():
             except KeyError:
                 # commit is not in the repo
                 must_rewrite = True
-                current_commit = recreate_commit(
-                    gh_db.object(current_commit_id))
+                gh_json, was_cached = gh_db.commit(current_commit_id)
+                if not was_cached:
+                    fetch_commit_progress.update(1)
+                    fetch_commit_progress.refresh()
+                current_commit = recreate_commit(gh_json)
                 reconstructed = True
 
-            for parent in current_commit.parents:
-                if parent not in unsquashed_mapping:
-                    close_progress_bars()
-                    print(f"Fatal: {'reconstructed' * reconstructed} "
-                          f"commit {current_commit_id.decode()} has "
-                          f"parent {parent.decode()} not found in the mapping!")
-                    update_unsquashed_ref()
-                    sys.exit(1)
+            # parents of this commit need to be processed first
+            parents_to_enqueue = [
+                parent_id for parent_id in current_commit.parents
+                if parent_id not in unsquashed_mapping
+            ]
+            if parents_to_enqueue:
+                commit_stack.append(current_commit_id)
+                commit_stack.extend(parents_to_enqueue)
+                rewrite_progress.total += len(parents_to_enqueue)  # regress N
+                continue
 
             pull_request_id = detect_github_squash_commit(current_commit)
             if pull_request_id is not None:
@@ -373,19 +377,15 @@ def main():
                     fetch_commit_progress.refresh()
 
                 # ensure that all the PR's commits exist beforehand
-                commits_to_add = [
-                    pr_commit
-                    for pr_commit in reversed(pr_commits)
-                    if pr_commit not in unsquashed_mapping
-                ]
-                if commits_to_add:
+                merge_tip = pr_commits[0]
+                if merge_tip not in unsquashed_mapping:
                     # these commits must be rewritten before we can write the
                     # unsquashed merge PR. we push the PR commit back on the
                     # stack and will revisit it again when its attendant
                     # commits are all in.
                     commit_stack.append(current_commit_id)
-                    commit_stack.extend(commits_to_add)
-                    rewrite_progress.total += len(commits_to_add)
+                    commit_stack.append(pr_commits[0])
+                    rewrite_progress.total += 1  # regress 1 commit
                     continue
 
                 # convert this PR into a merge commit
