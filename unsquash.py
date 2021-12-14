@@ -280,11 +280,13 @@ def main():
                         help="Disable usage of the API, rely only on the cache")
     parser.add_argument("--pr_db", type=str, default="pull_requests.db",
                         help="The file path to the pull requests cache")
-    parser.add_argument("--squashed_branch", type=str, required=True,
+    # TODO: enable using refs here so it can use bare repos and commits as well
+    parser.add_argument("--squashed_branch", type=str, default="master",
                         help="The name of the branch to be unsquashed")
-    parser.add_argument("--unsquashed_branch", type=str, required=True,
+    parser.add_argument("--unsquashed_branch", type=str, default=None,
                         help="The name of the unsquashed branch to build or "
-                             "maintain")
+                             "maintain. Defaults to 'unsquash-' + the name of "
+                             "the squashed branch.")
     parser.add_argument("--unsquashed_committer", type=str,
                         default="UnsquashBot <unsquashbot@example.com>",
                         help="The committer line for the bot")
@@ -295,6 +297,8 @@ def main():
 
     repo = Repo(args.repo)
 
+    if args.unsquashed_branch is None:
+        args.unsquashed_branch = f"unsquash-{args.squashed_branch}"
     unsquashed_ref = f"refs/heads/{args.unsquashed_branch}".encode()
     try:
         unsquashed_head = repo.refs[unsquashed_ref]
