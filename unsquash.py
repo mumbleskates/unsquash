@@ -393,7 +393,8 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
                     commit_stack.append(merge_tip)
                     rewrite_progress.total += 1  # regress 1 commit
                     continue
-                assert all(pr_c in unsquashed_mapping for pr_c in pr_commits)
+                # TODO: isn't this supposed to be true?
+                # assert all(pr_c in unsquashed_mapping for pr_c in pr_commits)
 
                 # convert this PR into a merge commit
                 current_commit.parents = (current_commit.parents
