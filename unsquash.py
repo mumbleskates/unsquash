@@ -426,7 +426,8 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
                               fetch_obj_progress)
             current_commit.message = b''.join([
                 current_commit.message.rstrip(),
-                b'\n\nunsquashbot_reconstructed\n' * reconstructed,
+                b'\n\n',
+                b'unsquashbot_reconstructed\n' * reconstructed,
                 b'unsquashbot_original_commit=',
                 current_commit_id,
                 b'\n',
