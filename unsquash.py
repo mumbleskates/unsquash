@@ -1,5 +1,6 @@
 import argparse
 from base64 import b64decode
+from datetime import datetime
 from getpass import getpass
 import json
 import re
@@ -180,6 +181,28 @@ def map_unsquashed_branch(repo: Repo, head: bytes) -> dict[bytes, bytes]:
     return unsquashed_mapping
 
 
+def recreate_commit(commit_json: dict[str, any]) -> Commit:
+    """
+    Recreate a commit object approximately from github api json.
+    """
+    date_format = '%Y-%m-%dT%H:%M:%SZ'
+    commit = Commit()
+    commit.message = commit_json['commit']['message'].encode()
+    commit.author = (f"{commit_json['commit']['author']['name']} "
+                     f"<{commit_json['commit']['author']['email']}>".encode())
+    author_time = datetime.strptime(commit_json['commit']['author']['date'],
+                                    date_format)
+    commit.author_time = int(author_time.timestamp())
+    commit.author_timezone = 0
+    commit_time = datetime.strptime(commit_json['commit']['committer']['date'],
+                                    date_format)
+    commit.commit_time = int(commit_time.timestamp())
+    commit.commit_timezone = 0
+    commit.tree = commit_json['commit']['tree']['sha'].encode()
+    commit.parents = [p['sha'].encode() for p in commit_json['parents']]
+    return commit
+
+
 def recreate_tree(tree_json: dict[str, any]) -> Tree:
     """
     Recreate a tree object exactly from github api json.
@@ -214,6 +237,7 @@ def download_tree(repo: Repo, gh_db: GithubCache, tree_id: bytes,
     gh_tree, was_cached = gh_db.tree(tree_id)
     if not was_cached:
         fetch_progress.update(1)
+        fetch_progress.refresh()
     for entry in gh_tree['tree']:
         if entry['sha'].encode() in repo:
             continue
@@ -221,6 +245,7 @@ def download_tree(repo: Repo, gh_db: GithubCache, tree_id: bytes,
             gh_blob, was_cached = gh_db.blob(entry['sha'].encode())
             if not was_cached:
                 fetch_progress.update(1)
+                fetch_progress.refresh()
             repo.object_store.add_object(recreate_blob(gh_blob))
         elif entry['type'] == 'tree':
             download_tree(repo, gh_db, entry['sha'].encode(), fetch_progress)
@@ -253,9 +278,9 @@ def main():
 
     repo = Repo(args.repo)
 
+    unsquashed_ref = f"refs/heads/{args.unsquashed_branch}".encode()
     try:
-        unsquashed_head = repo.refs[
-            f"refs/heads/{args.unsquashed_branch}".encode()]
+        unsquashed_head = repo.refs[unsquashed_ref]
         unsquashed_mapping = map_unsquashed_branch(repo, unsquashed_head)
     except KeyError:
         print("Unsquashed branch does not yet exist")
@@ -287,6 +312,8 @@ def main():
                 commit_stack.append(walk.commit.id)
                 if detect_github_squash_commit(walk.commit):
                     expected_squash_commits += 1
+
+        head_commit_id = None
         rewrite_progress = tqdm(total=len(commit_stack),
                                 desc="unsquashing ", unit="commit")
         pr_progress = tqdm(total=expected_squash_commits,
@@ -297,10 +324,19 @@ def main():
                                   unit="obj")
         while commit_stack:
             current_commit_id = commit_stack.pop()
-            current_commit = repo[current_commit_id]  # TODO: May fail!
+            try:
+                current_commit = repo[current_commit_id]
+            except KeyError:
+                current_commit = recreate_commit(
+                    gh_db.object(current_commit_id))
+
+            for p in current_commit.parents:
+                print(f"Fatal: commit {current_commit_id.encode()} has parent "
+                      f"{p.encode()} not found in the mapping!")
+                sys.exit(1)
+
             pull_request_id = detect_github_squash_commit(current_commit)
             if pull_request_id is not None:
-                # TODO: we are only fetching from the api for now
                 pr_commits, was_cached = (
                     gh_db.pull_request_commits(pull_request_id))
                 pr_progress.update(1)
@@ -308,30 +344,55 @@ def main():
                     fetch_commit_progress.update(len(pr_commits))
                     pr_progress.refresh()
                     fetch_commit_progress.refresh()
-                # TODO: rewrite_progress.total += len(pr_commits)
-            # TODO: remap commits
 
-            # # build unsquashed commit object
-            # rewrite = walk.commit.copy()
-            # rewrite.message = b''.join([
-            #     walk.commit.message,
-            #     b'\n' * (not walk.commit.message.endswith(b'\n')),
-            #     b'unsquashbot_original_commit=',
-            #     walk.commit.id,
-            #     b'\n',
-            # ])
-            # rewrite.committer = bot_email
-            #
-            # rewrite.parents = [
-            #     unsquashed_mapping.get(parent, default=parent)
-            #     for parent in walk.commit.parents
-            # ]
-            rewrite_progress.update()
+                # ensure that all the PR's commits exist beforehand
+                commits_added = 0
+                for pr_commit in reversed(pr_commits):
+                    if pr_commit not in unsquashed_mapping:
+                        commit_stack.append(pr_commit)
+                        commits_added += 1
+                if commits_added:
+                    # these commits must be rewritten before we can write the
+                    # unsquashed merge PR.
+                    rewrite_progress.total += commits_added
+                    continue
+
+                # convert this PR into a merge commit
+                current_commit.parents = current_commit.parents + [
+                    pr_commits[-1]
+                ]
+                current_commit.committer = bot_email
+
+            if current_commit.tree not in repo:
+                download_tree(repo, gh_db, current_commit.tree,
+                              fetch_obj_progress)
+            current_commit.message = b''.join([
+                current_commit.message,
+                b'\n' * (not current_commit.message.endswith(b'\n')),
+                b'unsquashbot_original_commit=',
+                current_commit_id,
+                b'\n',
+            ])
+            # remap parent commits
+            current_commit.parents = [
+                unsquashed_mapping[p]
+                for p in current_commit.parents
+            ]
+            # insert into the mapping with the commit's new id
+            head_commit_id = current_commit.id
+            unsquashed_mapping[current_commit_id] = head_commit_id
+            # write the altered commit into the repo
+            repo.object_store.add_object(current_commit)
+            rewrite_progress.update(1)
 
         rewrite_progress.close()
         pr_progress.close()
         fetch_commit_progress.close()
         fetch_obj_progress.close()
+
+        if head_commit_id is not None:
+            print("Updating unsquashed branch head")
+            repo.refs[unsquashed_ref] = head_commit_id
 
 
 if __name__ == '__main__':
