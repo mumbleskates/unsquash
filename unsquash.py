@@ -297,11 +297,14 @@ def main():
 
     unsquashed_ref = f"refs/heads/{args.unsquashed_branch}".encode()
     try:
-        unsquashed_mapping = map_unsquashed_branch(repo,
-                                                   repo.refs[unsquashed_ref])
+        unsquashed_head = repo.refs[unsquashed_ref]
     except KeyError:
         print("Unsquashed branch does not yet exist")
+        unsquashed_head = None
         unsquashed_mapping = {}
+
+    if unsquashed_head is not None:
+        unsquashed_mapping = map_unsquashed_branch(repo, unsquashed_head)
 
     try:
         squashed_head = repo.refs[
