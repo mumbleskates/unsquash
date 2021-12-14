@@ -270,12 +270,13 @@ def download_tree(repo: Repo, gh_db: GithubCache, tree_id: bytes,
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Download pull request info")
+    parser = argparse.ArgumentParser(
+        description="Unsquash squashed pull requests from a github-based repo")
     parser.add_argument("--repo", type=str, required=True,
                         help="The file path to the local git repo")
     parser.add_argument("--github_repo", type=str, required=True,
                         help="The repo/name of the project on github")
-    parser.add_argument("--no_github", type=bool, default=False,
+    parser.add_argument("--no_github", action='store_true', default=False,
                         help="Disable usage of the API, rely only on the cache")
     parser.add_argument("--pr_db", type=str, default="pull_requests.db",
                         help="The file path to the pull requests cache")
@@ -397,7 +398,7 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
                     fetch_commit_progress.refresh()
 
                 # ensure that all the PR's commits exist beforehand
-                merge_tip = pr_commits[0]
+                merge_tip = pr_commits[-1]
                 if merge_tip not in unsquashed_mapping:
                     # these commits must be rewritten before we can write the
                     # unsquashed merge PR. we push the PR commit back on the
@@ -407,8 +408,7 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
                     commit_stack.append(merge_tip)
                     rewrite_progress.total += 1  # regress 1 commit
                     continue
-                # TODO: isn't this supposed to be true?
-                # assert all(pr_c in unsquashed_mapping for pr_c in pr_commits)
+                assert all(pr_c in unsquashed_mapping for pr_c in pr_commits)
 
                 # convert this PR into a merge commit
                 current_commit.parents = (current_commit.parents
