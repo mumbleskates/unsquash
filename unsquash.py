@@ -412,10 +412,9 @@ def main():
                 download_tree(repo, gh_db, current_commit.tree,
                               fetch_obj_progress)
             current_commit.message = b''.join([
-                current_commit.message,
-                b'\n' * (not current_commit.message.endswith(b'\n')),
-                b'\nunsquashbot_reconstructed' * reconstructed,
-                b'\nunsquashbot_original_commit=',
+                current_commit.message.rstrip(),
+                b'\n\nunsquashbot_reconstructed\n' * reconstructed,
+                b'unsquashbot_original_commit=',
                 current_commit_id,
                 b'\n',
             ])
