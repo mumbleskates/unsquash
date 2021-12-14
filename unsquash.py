@@ -255,8 +255,8 @@ def download_tree(repo: Repo, gh_db: GithubCache, tree_id: bytes,
         elif entry['type'] == 'tree':
             download_tree(repo, gh_db, entry['sha'].encode(), fetch_progress)
         else:
-            assert False, ("Unknown, absurd tree entry object type",
-                           entry['type'])
+            assert False, (f"Unknown, absurd tree entry object type "
+                           f"{entry['type']} in tree {tree_id}")
     repo.object_store.add_object(recreate_tree(gh_tree))
 
 
@@ -308,36 +308,41 @@ def main():
             db_path=args.pr_db,
             github_repo_name=args.github_repo,
             github_token=token) as gh_db:
-        commit_stack = []
-        expected_squash_commits = 0
-        for walk in tqdm(repo.get_walker(squashed_head),
-                         desc="crawling squashed branch", unit="commit"):
-            if walk.commit.id not in unsquashed_mapping:
-                commit_stack.append(walk.commit.id)
-                if detect_github_squash_commit(walk.commit):
-                    expected_squash_commits += 1
+        rebuild_history(repo=repo, gh_db=gh_db, bot_email=bot_email,
+                        squashed_head=squashed_head,
+                        unsquashed_ref=unsquashed_ref,
+                        unsquashed_mapping=unsquashed_mapping)
 
-        head_commit_id = None
-        rewrite_progress = tqdm(total=len(commit_stack),
-                                desc="unsquashing ", unit="commit")
-        pr_progress = tqdm(total=expected_squash_commits,
-                           desc="squashed prs", unit="pr")
-        fetch_commit_progress = tqdm(desc="fetching commits",
-                                     unit="commit")
-        fetch_obj_progress = tqdm(desc="fetching missing objects",
-                                  unit="obj")
 
-        def close_progress_bars():
-            rewrite_progress.close()
-            pr_progress.close()
-            fetch_commit_progress.close()
-            fetch_obj_progress.close()
+def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
+                    squashed_head: bytes, unsquashed_ref: bytes,
+                    unsquashed_mapping: dict[bytes, bytes]) -> None:
+    commit_stack = []
+    expected_squash_commits = 0
+    for walk in tqdm(repo.get_walker(squashed_head),
+                     desc="crawling squashed branch", unit="commit"):
+        if walk.commit.id not in unsquashed_mapping:
+            commit_stack.append(walk.commit.id)
+            if detect_github_squash_commit(walk.commit):
+                expected_squash_commits += 1
 
-        def update_unsquashed_ref():
-            if head_commit_id is not None:
-                print("Updating unsquashed branch head")
-                repo.refs[unsquashed_ref] = head_commit_id
+    head_commit_id = None
+    rewrite_progress = tqdm(total=len(commit_stack),
+                            desc="unsquashing ", unit="commit")
+    pr_progress = tqdm(total=expected_squash_commits,
+                       desc="squashed prs", unit="pr")
+    fetch_commit_progress = tqdm(desc="fetching commits",
+                                 unit="commit")
+    fetch_obj_progress = tqdm(desc="fetching missing objects",
+                              unit="obj")
 
+    def close_progress_bars():
+        rewrite_progress.close()
+        pr_progress.close()
+        fetch_commit_progress.close()
+        fetch_obj_progress.close()
+
+    try:
         while commit_stack:
             current_commit_id = commit_stack.pop()
             must_rewrite = False
@@ -362,7 +367,8 @@ def main():
             if parents_to_enqueue:
                 commit_stack.append(current_commit_id)
                 commit_stack.extend(parents_to_enqueue)
-                rewrite_progress.total += len(parents_to_enqueue)  # regress N
+                # regress N commits
+                rewrite_progress.total += len(parents_to_enqueue)
                 continue
 
             pull_request_id = detect_github_squash_commit(current_commit)
@@ -387,9 +393,11 @@ def main():
                     commit_stack.append(merge_tip)
                     rewrite_progress.total += 1  # regress 1 commit
                     continue
+                assert all(pr_c in unsquashed_mapping for pr_c in pr_commits)
 
                 # convert this PR into a merge commit
-                current_commit.parents = current_commit.parents + [merge_tip]
+                current_commit.parents = (current_commit.parents
+                                          + [merge_tip])
                 current_commit.committer = bot_email
 
             # remap parent commits
@@ -397,7 +405,10 @@ def main():
                 unsquashed_mapping[p]
                 for p in current_commit.parents
             ]
-            if not must_rewrite and current_commit.parents == rewritten_parents:
+            if (
+                    not must_rewrite
+                    and current_commit.parents == rewritten_parents
+            ):
                 # this commit is exactly the same in unsquashed history
                 unsquashed_mapping[current_commit_id] = current_commit_id
                 head_commit_id = current_commit_id
@@ -422,9 +433,11 @@ def main():
             # write the altered commit into the repo
             repo.object_store.add_object(current_commit)
             rewrite_progress.update(1)
-
+    finally:
         close_progress_bars()
-        update_unsquashed_ref()
+        if head_commit_id is not None:
+            print("Updating unsquashed branch head")
+            repo.refs[unsquashed_ref] = head_commit_id
 
 
 if __name__ == '__main__':
