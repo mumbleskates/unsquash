@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 from base64 import b64decode
 from datetime import datetime
@@ -337,11 +339,13 @@ def main():
             must_rewrite = False
             try:
                 current_commit = repo[current_commit_id]
+                reconstructed = False
             except KeyError:
                 # commit is not in the repo
                 must_rewrite = True
                 current_commit = recreate_commit(
                     gh_db.object(current_commit_id))
+                reconstructed = True
                 current_commit.message = b''.join([
                     current_commit.message,
                     b'\n' * (not current_commit.message.endswith(b'\n')),
@@ -351,7 +355,8 @@ def main():
             for parent in current_commit.parents:
                 if parent not in unsquashed_mapping:
                     close_progress_bars()
-                    print(f"Fatal: commit {current_commit_id.decode()} has "
+                    print(f"Fatal: {'reconstructed' * reconstructed} "
+                          f"commit {current_commit_id.decode()} has "
                           f"parent {parent.decode()} not found in the mapping!")
                     sys.exit(1)
 
@@ -367,15 +372,19 @@ def main():
                     fetch_commit_progress.refresh()
 
                 # ensure that all the PR's commits exist beforehand
-                commits_added = 0
-                for pr_commit in reversed(pr_commits):
-                    if pr_commit not in unsquashed_mapping:
-                        commit_stack.append(pr_commit)
-                        commits_added += 1
-                if commits_added:
+                commits_to_add = [
+                    pr_commit
+                    for pr_commit in reversed(pr_commits)
+                    if pr_commit not in unsquashed_mapping
+                ]
+                if commits_to_add:
                     # these commits must be rewritten before we can write the
-                    # unsquashed merge PR.
-                    rewrite_progress.total += commits_added
+                    # unsquashed merge PR. we push the PR commit back on the
+                    # stack and will revisit it again when its attendant
+                    # commits are all in.
+                    commit_stack.append(current_commit_id)
+                    commit_stack.extend(commits_to_add)
+                    rewrite_progress.total += len(commits_to_add)
                     continue
 
                 # convert this PR into a merge commit
@@ -385,12 +394,11 @@ def main():
                 current_commit.committer = bot_email
 
             # remap parent commits
-            current_parents = current_commit.parents
             rewritten_parents = [
                 unsquashed_mapping[p]
-                for p in current_parents
+                for p in current_commit.parents
             ]
-            if not must_rewrite and current_parents == rewritten_parents:
+            if not must_rewrite and current_commit.parents == rewritten_parents:
                 # this commit is exactly the same in unsquashed history
                 unsquashed_mapping[current_commit_id] = current_commit_id
                 head_commit_id = current_commit_id
