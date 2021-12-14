@@ -306,6 +306,8 @@ def main():
     if unsquashed_head is not None:
         unsquashed_mapping = map_unsquashed_branch(repo, unsquashed_head)
 
+    print(f"Mapped {len(unsquashed_mapping)} commits")
+
     try:
         squashed_head = repo.refs[
             f"refs/heads/{args.squashed_branch}".encode()]
