@@ -16,8 +16,14 @@ from dulwich.repo import Repo
 
 
 class GithubCache:
-    def __init__(self, db_path: str, github_repo_name: str, github_token: str):
-        self.github_repo = Github(github_token).get_repo(github_repo_name)
+    def __init__(self, db_path: str, github_repo_name: str,
+                 github_token: str | None):
+        """
+        Connect a cache to sqlite at db_path and connect to the github API.
+        If token is None, the API will not be available.
+        """
+        if github_token is not None:
+            self.github_repo = Github(github_token).get_repo(github_repo_name)
         self.db_path = db_path
         self.db = None
 
@@ -269,6 +275,8 @@ def main():
                         help="The file path to the local git repo")
     parser.add_argument("--github_repo", type=str, required=True,
                         help="The repo/name of the project on github")
+    parser.add_argument("--no_github", type=bool, default=False,
+                        help="Disable usage of the API, rely only on the cache")
     parser.add_argument("--pr_db", type=str, default="pull_requests.db",
                         help="The file path to the pull requests cache")
     parser.add_argument("--squashed_branch", type=str, required=True,
@@ -301,11 +309,14 @@ def main():
         print(f"Squashed branch {repr(args.squashed_branch)} not found!")
         sys.exit(1)
 
-    if args.token_file is None:
-        token = getpass(prompt="github token: ")
+    if args.no_github:
+        token = None
     else:
-        with open(args.token_file, 'r') as f:
-            token = f.read().strip()
+        if args.token_file is None:
+            token = getpass(prompt="github token: ")
+        else:
+            with open(args.token_file, 'r') as f:
+                token = f.read().strip()
 
     with GithubCache(
             db_path=args.pr_db,
