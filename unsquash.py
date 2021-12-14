@@ -384,14 +384,12 @@ def main():
                     # stack and will revisit it again when its attendant
                     # commits are all in.
                     commit_stack.append(current_commit_id)
-                    commit_stack.append(pr_commits[0])
+                    commit_stack.append(merge_tip)
                     rewrite_progress.total += 1  # regress 1 commit
                     continue
 
                 # convert this PR into a merge commit
-                current_commit.parents = current_commit.parents + [
-                    pr_commits[-1]
-                ]
+                current_commit.parents = current_commit.parents + [merge_tip]
                 current_commit.committer = bot_email
 
             # remap parent commits
