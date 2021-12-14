@@ -47,7 +47,7 @@ class GithubCache:
             [[json_data]] = self.db.execute("""
                 SELECT commits_json FROM pull_requests WHERE id = ?;
             """, (pull_request_id,))
-            return json.loads(json_data), True
+            return [c_id.encode() for c_id in json.loads(json_data)], True
         except ValueError:
             pass
         return self._fetch_pr(pull_request_id), False
@@ -194,6 +194,9 @@ def recreate_commit(commit_json: dict[str, any]) -> Commit:
                                     date_format)
     commit.author_time = int(author_time.timestamp())
     commit.author_timezone = 0
+    commit.committer = (f"{commit_json['commit']['committer']['name']} "
+                        f"<{commit_json['commit']['committer']['email']}"
+                        f">".encode())
     commit_time = datetime.strptime(commit_json['commit']['committer']['date'],
                                     date_format)
     commit.commit_time = int(commit_time.timestamp())
