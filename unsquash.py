@@ -308,6 +308,8 @@ def main():
 
     print(f"Mapped {len(unsquashed_mapping)} commits")
 
+    return
+
     try:
         squashed_head = repo.refs[
             f"refs/heads/{args.squashed_branch}".encode()]
