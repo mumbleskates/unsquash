@@ -322,21 +322,39 @@ def main():
                                      unit="commit")
         fetch_obj_progress = tqdm(desc="fetching missing objects",
                                   unit="obj")
+
+        def close_progress_bars():
+            rewrite_progress.close()
+            pr_progress.close()
+            fetch_commit_progress.close()
+            fetch_obj_progress.close()
+
         while commit_stack:
             current_commit_id = commit_stack.pop()
+            must_rewrite = False
             try:
                 current_commit = repo[current_commit_id]
             except KeyError:
+                # commit is not in the repo
+                must_rewrite = True
                 current_commit = recreate_commit(
                     gh_db.object(current_commit_id))
+                current_commit.message = b''.join([
+                    current_commit.message,
+                    b'\n' * (not current_commit.message.endswith(b'\n')),
+                    b'unsquashbot_reconstructed\n',
+                ])
 
-            for p in current_commit.parents:
-                print(f"Fatal: commit {current_commit_id.encode()} has parent "
-                      f"{p.encode()} not found in the mapping!")
-                sys.exit(1)
+            for parent in current_commit.parents:
+                if parent not in unsquashed_mapping:
+                    close_progress_bars()
+                    print(f"Fatal: commit {current_commit_id.decode()} has "
+                          f"parent {parent.decode()} not found in the mapping!")
+                    sys.exit(1)
 
             pull_request_id = detect_github_squash_commit(current_commit)
             if pull_request_id is not None:
+                must_rewrite = True
                 pr_commits, was_cached = (
                     gh_db.pull_request_commits(pull_request_id))
                 pr_progress.update(1)
@@ -363,6 +381,21 @@ def main():
                 ]
                 current_commit.committer = bot_email
 
+            # remap parent commits
+            current_parents = current_commit.parents
+            rewritten_parents = [
+                unsquashed_mapping[p]
+                for p in current_parents
+            ]
+            if not must_rewrite and current_parents == rewritten_parents:
+                # this commit is exactly the same in unsquashed history
+                unsquashed_mapping[current_commit_id] = current_commit_id
+                head_commit_id = current_commit_id
+                rewrite_progress.update(1)
+                continue
+
+            # this commit has changed, rewrite it!
+            current_commit.parents = rewritten_parents
             if current_commit.tree not in repo:
                 download_tree(repo, gh_db, current_commit.tree,
                               fetch_obj_progress)
@@ -373,11 +406,6 @@ def main():
                 current_commit_id,
                 b'\n',
             ])
-            # remap parent commits
-            current_commit.parents = [
-                unsquashed_mapping[p]
-                for p in current_commit.parents
-            ]
             # insert into the mapping with the commit's new id
             head_commit_id = current_commit.id
             unsquashed_mapping[current_commit_id] = head_commit_id
@@ -385,10 +413,7 @@ def main():
             repo.object_store.add_object(current_commit)
             rewrite_progress.update(1)
 
-        rewrite_progress.close()
-        pr_progress.close()
-        fetch_commit_progress.close()
-        fetch_obj_progress.close()
+        close_progress_bars()
 
         if head_commit_id is not None:
             print("Updating unsquashed branch head")
