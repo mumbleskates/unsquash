@@ -168,7 +168,7 @@ def detect_original_commit(commit: Commit) -> bytes | None:
     Returns the commit id of the original commit if this is an unsquashed
     commit, otherwise returns None.
     """
-    match = re.search(rb'\n\nunsquashbot_original_commit=([0-9a-f]+)\n$',
+    match = re.search(rb'\nunsquashbot_original_commit=([0-9a-f]+)\n$',
                       commit.message, re.MULTILINE)
     return match and match.group(1)
 
