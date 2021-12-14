@@ -254,7 +254,7 @@ def download_tree(repo: Repo, gh_db: GithubCache, tree_id: bytes,
             repo.object_store.add_object(recreate_blob(gh_blob))
         elif entry['type'] == 'tree':
             download_tree(repo, gh_db, entry['sha'].encode(), fetch_progress)
-        elif entry['type'] == 'commit' and entry['mode'] == '16000':
+        elif entry['type'] == 'commit' and entry['mode'] == '160000':
             pass  # submodule, no action required
         else:
             assert False, (f"Unknown, absurd tree entry object type "
