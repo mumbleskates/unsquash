@@ -334,6 +334,11 @@ def main():
             fetch_commit_progress.close()
             fetch_obj_progress.close()
 
+        def update_unsquashed_ref():
+            if head_commit_id is not None:
+                print("Updating unsquashed branch head")
+                repo.refs[unsquashed_ref] = head_commit_id
+
         while commit_stack:
             current_commit_id = commit_stack.pop()
             must_rewrite = False
@@ -358,6 +363,7 @@ def main():
                     print(f"Fatal: {'reconstructed' * reconstructed} "
                           f"commit {current_commit_id.decode()} has "
                           f"parent {parent.decode()} not found in the mapping!")
+                    update_unsquashed_ref()
                     sys.exit(1)
 
             pull_request_id = detect_github_squash_commit(current_commit)
@@ -425,10 +431,7 @@ def main():
             rewrite_progress.update(1)
 
         close_progress_bars()
-
-        if head_commit_id is not None:
-            print("Updating unsquashed branch head")
-            repo.refs[unsquashed_ref] = head_commit_id
+        update_unsquashed_ref()
 
 
 if __name__ == '__main__':
