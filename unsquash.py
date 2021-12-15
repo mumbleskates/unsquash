@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from base64 import b64decode
-from datetime import datetime
+from datetime import datetime, timedelta
 from getpass import getpass
 import json
 import re
@@ -180,9 +180,19 @@ class GithubCache:
 
     def _wait_for_rate_limit(self) -> None:
         rate_limit = self.github.get_rate_limit()
-        time_to_wait = rate_limit.core.reset - datetime.utcnow()
-        print(f"  ( waiting {time_to_wait} for rate limit . . . ) ")
-        time.sleep(time_to_wait.total_seconds() + 15.0)
+        wait_start = datetime.utcnow()
+        time_to_wait = (rate_limit.core.reset - wait_start
+                        + timedelta(seconds=10))
+        with tqdm(desc="waiting for rate limit",
+                  total=time_to_wait.total_seconds(), unit="s") as progress:
+            while True:
+                time.sleep(1)
+                now = datetime.utcnow()
+                waited = now - wait_start
+                progress.n = waited.total_seconds()
+                progress.refresh()
+                if waited > time_to_wait:
+                    break
 
 
 def detect_github_squash_commit(commit: Commit) -> int | None:
