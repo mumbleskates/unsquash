@@ -326,21 +326,25 @@ def recreate_commit(commit_json: dict) -> Commit:
     """
     date_format = '%Y-%m-%dT%H:%M:%SZ'
     commit = Commit()
-    commit.message = commit_json['commit']['message'].encode()
-    commit.author = (f"{commit_json['commit']['author']['name']} "
-                     f"<{commit_json['commit']['author']['email']}>".encode())
-    author_time = datetime.strptime(commit_json['commit']['author']['date'],
+    # adapt in case this is a "pull request commit" json object instead of a
+    # "git commit" json object
+    if 'commit' in commit_json:
+        commit_json = commit_json['commit']
+    commit.message = commit_json['message'].encode()
+    commit.author = (f"{commit_json['author']['name']} "
+                     f"<{commit_json['author']['email']}>".encode())
+    author_time = datetime.strptime(commit_json['author']['date'],
                                     date_format)
     commit.author_time = int(author_time.timestamp())
     commit.author_timezone = 0
-    commit.committer = (f"{commit_json['commit']['committer']['name']} "
-                        f"<{commit_json['commit']['committer']['email']}"
+    commit.committer = (f"{commit_json['committer']['name']} "
+                        f"<{commit_json['committer']['email']}"
                         f">".encode())
-    commit_time = datetime.strptime(commit_json['commit']['committer']['date'],
+    commit_time = datetime.strptime(commit_json['committer']['date'],
                                     date_format)
     commit.commit_time = int(commit_time.timestamp())
     commit.commit_timezone = 0
-    commit.tree = commit_json['commit']['tree']['sha'].encode()
+    commit.tree = commit_json['tree']['sha'].encode()
     commit.parents = [p['sha'].encode() for p in commit_json['parents']]
     return commit
 
@@ -429,14 +433,12 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
     pr_progress = tqdm(total=len(known_pull_requests),
                        desc="squashed prs", unit="pr")
     fetch_pr_progress = tqdm(desc="fetching PRs", unit="pr")
-    fetch_commit_progress = tqdm(desc="fetching commits", unit="commit")
     fetch_obj_progress = tqdm(desc="fetching missing objects", unit="obj")
 
     def close_progress_bars():
         rewrite_progress.close()
         pr_progress.close()
         fetch_pr_progress.close()
-        fetch_commit_progress.close()
         fetch_obj_progress.close()
 
     try:
@@ -451,8 +453,8 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
                 must_rewrite = True
                 gh_json, was_cached = gh_db.commit(current_commit_id)
                 if not was_cached:
-                    fetch_commit_progress.update(1)
-                    fetch_commit_progress.refresh()
+                    fetch_obj_progress.update(1)
+                    fetch_obj_progress.refresh()
                 current_commit = recreate_commit(gh_json)
                 reconstructed = True
 
