@@ -180,7 +180,7 @@ class GithubCache:
 
     def _wait_for_rate_limit(self) -> None:
         rate_limit = self.github.get_rate_limit()
-        time_to_wait = rate_limit.core.reset - datetime.now()
+        time_to_wait = rate_limit.core.reset - datetime.utcnow()
         print(f"  ( waiting {time_to_wait} for rate limit . . . ) ")
         time.sleep(time_to_wait.total_seconds() + 15.0)
 
