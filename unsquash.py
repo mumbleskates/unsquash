@@ -34,6 +34,14 @@ def main():
                         help="The name of the unsquashed branch to build or "
                              "maintain. Defaults to 'unsquash-' + the name of "
                              "the squashed branch.")
+    parser.add_argument("--also_map", action='append',
+                        help="Additional branches to map before beginning the "
+                             "unsquash process. Helpful when one branch is"
+                             "already unsquashed and you want its commits to "
+                             "be reused for a second, related branch; simply "
+                             "unsquash into the new branch and list any "
+                             "already-unsquashed branches you want to include "
+                             "as an --also_map argument.")
     parser.add_argument("--bot_email", type=str,
                         default="unsquashbot@example.com",
                         help="The email address in the bot's committer line")
@@ -47,6 +55,8 @@ def main():
     if args.unsquashed_branch is None:
         args.unsquashed_branch = f"unsquash-{args.squashed_branch}"
     unsquashed_ref = f"refs/heads/{args.unsquashed_branch}".encode()
+    refs_to_map = [unsquashed_ref, *(f"refs/heads/{also}".encode()
+                                     for also in args.also_map)]
 
     try:
         squashed_head = repo.refs[
@@ -71,6 +81,7 @@ def main():
         rebuild_history(repo=repo, gh_db=gh_db,
                         unsquashed_committer=unsquashed_committer,
                         squashed_head=squashed_head,
+                        refs_to_map=refs_to_map,
                         unsquashed_ref=unsquashed_ref)
 
 
@@ -310,12 +321,12 @@ def detect_original_commit(commit: Commit) -> bytes | None:
     return match and match.group(1)
 
 
-def map_unsquashed_branch(repo: Repo, head: bytes) -> dict[bytes, bytes]:
+def map_unsquashed_refs(repo: Repo, heads: list[bytes]) -> dict[bytes, bytes]:
     # mapping from original commit id to unsquashed branch commit id
     unsquashed_mapping = {}
     num_rewritten = 0
-    for walk in tqdm(repo.get_walker(head),
-                     desc="mapping unsquash branch", unit="commit"):
+    for walk in tqdm(repo.get_walker(include=heads),
+                     desc="mapping unsquashed commits", unit="commit"):
         original_commit_id = detect_original_commit(walk.commit)
         if original_commit_id:
             unsquashed_mapping[original_commit_id] = walk.commit.id
@@ -412,7 +423,8 @@ def download_tree(repo: Repo, gh_db: GithubCache, tree_id: bytes,
 
 
 def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
-                    squashed_head: bytes, unsquashed_ref: bytes) -> None:
+                    squashed_head: bytes, refs_to_map: list[bytes],
+                    unsquashed_ref: bytes) -> None:
     try:
         unsquashed_head = repo.refs[unsquashed_ref]
     except KeyError:
@@ -422,7 +434,7 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
     if unsquashed_head is None:
         unsquashed_mapping = {}
     else:
-        unsquashed_mapping = map_unsquashed_branch(repo, unsquashed_head)
+        unsquashed_mapping = map_unsquashed_refs(repo, refs_to_map)
 
     commit_stack = []
     known_pull_requests = set()
