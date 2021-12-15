@@ -8,11 +8,12 @@ import json
 import re
 import sqlite3
 import sys
-from tqdm import tqdm
+import time
 
-from github import Github
 from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import Repo
+from github import Github, RateLimitExceededException
+from tqdm import tqdm
 
 
 class GithubCache:
@@ -23,7 +24,8 @@ class GithubCache:
         If token is None, the API will not be available.
         """
         if github_token is not None:
-            self.github_repo = Github(github_token).get_repo(github_repo_name)
+            self.github = Github(github_token)
+            self.github_repo = self.github.get_repo(github_repo_name)
         self.db_path = db_path
         self.db = None
 
@@ -103,7 +105,12 @@ class GithubCache:
             return self._fetch_blob(blob_id, cursor), False
 
     def _fetch_pr(self, pull_request_id: int) -> list[bytes]:
-        github_pull_request = self.github_repo.get_pull(pull_request_id)
+        while True:
+            try:
+                github_pull_request = self.github_repo.get_pull(pull_request_id)
+                break
+            except RateLimitExceededException:
+                self._wait_for_rate_limit()
         commits = []
 
         def gen_commits():
@@ -126,7 +133,13 @@ class GithubCache:
         return [c.encode() for c in commits]
 
     def _fetch_commit(self, commit_id: bytes, cursor) -> dict[str, any]:
-        github_commit = self.github_repo.get_git_commit(commit_id.decode())
+        while True:
+            try:
+                github_commit = self.github_repo.get_git_commit(
+                    commit_id.decode())
+                break
+            except RateLimitExceededException:
+                self._wait_for_rate_limit()
         raw_data = github_commit.raw_data
         cursor.execute("""
             INSERT INTO objects(id, json) VALUES (?, ?);
@@ -134,7 +147,12 @@ class GithubCache:
         return raw_data
 
     def _fetch_tree(self, tree_id, cursor) -> dict[str, any]:
-        github_tree = self.github_repo.get_git_tree(tree_id.decode())
+        while True:
+            try:
+                github_tree = self.github_repo.get_git_tree(tree_id.decode())
+                break
+            except RateLimitExceededException:
+                self._wait_for_rate_limit()
         raw_data = github_tree.raw_data
         cursor.execute("""
             INSERT INTO objects(id, json) VALUES (?, ?);
@@ -142,12 +160,23 @@ class GithubCache:
         return raw_data
 
     def _fetch_blob(self, blob_id, cursor) -> dict[str, any]:
-        github_blob = self.github_repo.get_git_blob(blob_id.decode())
+        while True:
+            try:
+                github_blob = self.github_repo.get_git_blob(blob_id.decode())
+                break
+            except RateLimitExceededException:
+                self._wait_for_rate_limit()
         raw_data = github_blob.raw_data
         cursor.execute("""
             INSERT INTO objects(id, json) VALUES (?, ?);
         """, (github_blob.sha, json.dumps(raw_data)))
         return raw_data
+
+    def _wait_for_rate_limit(self) -> None:
+        rate_limit = self.github.get_rate_limit()
+        time_to_wait = rate_limit.core.reset - datetime.now()
+        print(f"  ( waiting {time_to_wait} for rate limit . . . ) ")
+        time.sleep(time_to_wait.total_seconds() + 15.0)
 
 
 def detect_github_squash_commit(commit: Commit) -> int | None:
