@@ -83,6 +83,7 @@ class GithubCache:
         """
         if github_token is not None:
             self.github = Github(github_token)
+            self.github_repo_name = github_repo_name
             while True:
                 try:
                     self.github_repo = self.github.get_repo(github_repo_name)
@@ -96,37 +97,47 @@ class GithubCache:
     def __enter__(self):
         self.db = sqlite3.connect(self.db_path)
         self.db.execute("""PRAGMA journal_mode = WAL;""")
-        self.db.executescript("""
-            CREATE TABLE IF NOT EXISTS pull_requests(
-                id INTEGER PRIMARY KEY,
-                commits_json TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS objects(
-                id TEXT PRIMARY KEY,
-                json TEXT NOT NULL
-            ) WITHOUT ROWID;
-        """)
+        with self.db as cursor:
+            cursor.executescript("""
+                CREATE TABLE IF NOT EXISTS pull_requests(
+                    project TEXT NOT NULL,
+                    id INTEGER NOT NULL,
+                    pr_json TEXT NOT NULL,
+                    commits_json TEXT NOT NULL,
+                    PRIMARY KEY (project, id)
+                );
+                CREATE TABLE IF NOT EXISTS objects(
+                    id TEXT PRIMARY KEY,
+                    json TEXT NOT NULL
+                ) WITHOUT ROWID;
+            """)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.db.close()
         self.db = None
 
-    def pull_request_commits(self, pull_request_id: int) -> (list[bytes], bool):
+    def pull_request(self, pull_request_id: int) -> ((dict, list[bytes]), bool):
         """
-        Returns (list of pull request commit ids, bool of whether this pr
-        was cached.
+        Returns ((pull request json, list of commit ids), bool of whether this
+        pr was cached).
         """
-        try:
-            [[json_data]] = self.db.execute("""
-                SELECT commits_json FROM pull_requests WHERE id = ?;
-            """, (pull_request_id,))
-            return [c_id.encode() for c_id in json.loads(json_data)], True
-        except ValueError:
-            pass
-        return self._fetch_pr(pull_request_id), False
+        with self.db as cursor:
+            try:
+                [[pr_json, commits_json]] = cursor.execute("""
+                    SELECT pr_json, commits_json FROM pull_requests
+                    WHERE project = ? AND id = ?;
+                """, (self.github_repo_name, pull_request_id))
+                return (
+                    (json.loads(pr_json),
+                     [c_id.encode() for c_id in json.loads(commits_json)]),
+                    True
+                )
+            except ValueError:
+                pass
+            return self._fetch_pr(pull_request_id, cursor), False
 
-    def object(self, object_id: bytes) -> dict[str, any]:
+    def object(self, object_id: bytes) -> dict:
         try:
             [[json_data]] = self.db.execute("""
                 SELECT json FROM objects WHERE id = ?;
@@ -135,7 +146,7 @@ class GithubCache:
         except ValueError:
             raise KeyError("commit not in database", object_id)
 
-    def commit(self, commit_id: bytes) -> (dict[str, any], bool):
+    def commit(self, commit_id: bytes) -> (dict, bool):
         """
         Returns (commit json, bool of whether this object was cached.
         """
@@ -146,7 +157,7 @@ class GithubCache:
                 pass
             return self._fetch_commit(commit_id, cursor), False
 
-    def tree(self, tree_id: bytes) -> (dict[str, any], bool):
+    def tree(self, tree_id: bytes) -> (dict, bool):
         """
         Returns (tree json, bool of whether this object was cached.
         """
@@ -157,7 +168,7 @@ class GithubCache:
                 pass
             return self._fetch_tree(tree_id, cursor), False
 
-    def blob(self, blob_id: bytes) -> (dict[str, any], bool):
+    def blob(self, blob_id: bytes) -> (dict, bool):
         """
         Returns (blob json, bool of whether this object was cached.
         """
@@ -168,53 +179,50 @@ class GithubCache:
                 pass
             return self._fetch_blob(blob_id, cursor), False
 
-    def _fetch_pr(self, pull_request_id: int) -> list[bytes]:
+    def _fetch_pr(self, pull_request_id: int, cursor) -> (dict, list[bytes]):
+        """
+        Fetches a PR and all it scommits and returns a tuple of (the pull
+        request json, the list of the pr's commit ids).
+        """
         while True:
             try:
                 github_pull_request = self.github_repo.get_pull(pull_request_id)
+                raw_data: dict = github_pull_request.raw_data
                 break
             except RateLimitExceededException:
                 self._wait_for_rate_limit()
-        commits = []
 
-        def gen_commits():
-            # the paginated list class in the github library is pretty fragile
-            # against errors during iteration, so get the pages all at once
-            while True:
-                try:
-                    all_commits = list(github_pull_request.get_commits())
-                    break
-                except RateLimitExceededException:
-                    self._wait_for_rate_limit()
-            for commit in all_commits:
-                commits.append(commit.sha)
-                while True:
-                    try:
-                        raw_data = json.dumps(commit.raw_data)
-                        break
-                    except RateLimitExceededException:
-                        self._wait_for_rate_limit()
-                yield commit.sha, raw_data
+        # the paginated list class in the github library is pretty fragile
+        # against errors during iteration, so get the pages all at once
+        while True:
+            try:
+                commits = [c.sha for c in github_pull_request.get_commits()]
+                break
+            except RateLimitExceededException:
+                self._wait_for_rate_limit()
 
-        with self.db as cursor:
-            # save all the commit data in the database
-            cursor.executemany("""
-                INSERT OR IGNORE INTO objects(id, json) VALUES (?, ?);
-            """, gen_commits())
+        # save the PR and its list of commit ids in the database
+        cursor.execute("""
+            INSERT INTO pull_requests(project, id, pr_json, commits_json)
+            VALUES (?, ?, ?, ?);
+        """, (
+            self.github_repo_name,
+            pull_request_id,
+            json.dumps(raw_data),
+            json.dumps(commits)
+        ))
 
-            # save the PR itself including its list of commits in the database
-            cursor.execute("""
-                INSERT INTO pull_requests(id, commits_json) VALUES (?, ?);
-            """, (pull_request_id, json.dumps(commits)))
+        return raw_data, [c.encode() for c in commits]
 
-        return [c.encode() for c in commits]
-
-    def _fetch_commit(self, commit_id: bytes, cursor) -> dict[str, any]:
+    def _fetch_commit(self, commit_id: bytes, cursor) -> dict:
+        """
+        Fetches a commit from the API and returns it.
+        """
         while True:
             try:
                 github_commit = self.github_repo.get_git_commit(
                     commit_id.decode())
-                raw_data = github_commit.raw_data
+                raw_data: dict = github_commit.raw_data
                 break
             except RateLimitExceededException:
                 self._wait_for_rate_limit()
@@ -223,11 +231,14 @@ class GithubCache:
         """, (github_commit.sha, json.dumps(raw_data)))
         return raw_data
 
-    def _fetch_tree(self, tree_id, cursor) -> dict[str, any]:
+    def _fetch_tree(self, tree_id, cursor) -> dict:
+        """
+        Fetches a tree from the API and returns it.
+        """
         while True:
             try:
                 github_tree = self.github_repo.get_git_tree(tree_id.decode())
-                raw_data = github_tree.raw_data
+                raw_data: dict = github_tree.raw_data
                 break
             except RateLimitExceededException:
                 self._wait_for_rate_limit()
@@ -236,11 +247,14 @@ class GithubCache:
         """, (github_tree.sha, json.dumps(raw_data)))
         return raw_data
 
-    def _fetch_blob(self, blob_id, cursor) -> dict[str, any]:
+    def _fetch_blob(self, blob_id, cursor) -> dict:
+        """
+        Fetches a blob from the API and returns it.
+        """
         while True:
             try:
                 github_blob = self.github_repo.get_git_blob(blob_id.decode())
-                raw_data = github_blob.raw_data
+                raw_data: dict = github_blob.raw_data
                 break
             except RateLimitExceededException:
                 self._wait_for_rate_limit()
@@ -306,7 +320,7 @@ def map_unsquashed_branch(repo: Repo, head: bytes) -> dict[bytes, bytes]:
     return unsquashed_mapping
 
 
-def recreate_commit(commit_json: dict[str, any]) -> Commit:
+def recreate_commit(commit_json: dict) -> Commit:
     """
     Recreate a commit object approximately from github api json.
     """
@@ -331,7 +345,7 @@ def recreate_commit(commit_json: dict[str, any]) -> Commit:
     return commit
 
 
-def recreate_tree(tree_json: dict[str, any]) -> Tree:
+def recreate_tree(tree_json: dict) -> Tree:
     """
     Recreate a tree object exactly from github api json.
     """
@@ -346,7 +360,7 @@ def recreate_tree(tree_json: dict[str, any]) -> Tree:
     return tree
 
 
-def recreate_blob(blob_json: dict[str, any]) -> Blob:
+def recreate_blob(blob_json: dict) -> Blob:
     """
     Recreate a blob object exactly from github api json.
     """
@@ -414,14 +428,14 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
                             desc="unsquashing ", unit="commit")
     pr_progress = tqdm(total=len(known_pull_requests),
                        desc="squashed prs", unit="pr")
-    fetch_commit_progress = tqdm(desc="fetching commits",
-                                 unit="commit")
-    fetch_obj_progress = tqdm(desc="fetching missing objects",
-                              unit="obj")
+    fetch_pr_progress = tqdm(desc="fetching PRs", unit="pr")
+    fetch_commit_progress = tqdm(desc="fetching commits", unit="commit")
+    fetch_obj_progress = tqdm(desc="fetching missing objects", unit="obj")
 
     def close_progress_bars():
         rewrite_progress.close()
         pr_progress.close()
+        fetch_pr_progress.close()
         fetch_commit_progress.close()
         fetch_obj_progress.close()
 
@@ -464,15 +478,18 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
 
             if pull_request_id is not None:
                 must_rewrite = True
-                pr_commits, was_cached = (
-                    gh_db.pull_request_commits(pull_request_id))
+                (pr_json, pr_commits), was_cached = (
+                    gh_db.pull_request(pull_request_id))
                 if not was_cached:
-                    fetch_commit_progress.update(len(pr_commits))
-                    pr_progress.refresh()
-                    fetch_commit_progress.refresh()
+                    fetch_pr_progress.update(1)
+                    fetch_pr_progress.refresh()
+                # github also calls squash commits "merge commit"
+                assert current_commit_id == pr_json['merge_commit_sha'].encode()
+                # TODO: what if it isn't there? what if it doesn't match?
 
                 # ensure that all the PR's commits exist beforehand
-                merge_tip = pr_commits[-1]
+                merge_tip = pr_json['head']['sha'].encode()
+                assert merge_tip == pr_commits[-1]
                 if merge_tip not in unsquashed_mapping:
                     # these commits must be rewritten before we can write the
                     # unsquashed merge PR. we push the PR commit back on the
@@ -485,8 +502,7 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
                 assert all(pr_c in unsquashed_mapping for pr_c in pr_commits)
 
                 # convert this PR into a merge commit
-                current_commit.parents = (current_commit.parents
-                                          + [merge_tip])
+                current_commit.parents = [*current_commit.parents, merge_tip]
                 current_commit.committer = unsquashed_committer
                 pr_progress.update(1)
 
