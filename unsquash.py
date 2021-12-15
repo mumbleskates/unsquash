@@ -222,6 +222,8 @@ class GithubCache:
             try:
                 github_commit = self.github_repo.get_git_commit(
                     commit_id.decode())
+                assert (github_commit.sha.encode() == commit_id,
+                        f"bad data from github for commit {commit_id}")
                 raw_data: dict = github_commit.raw_data
                 break
             except RateLimitExceededException:
@@ -238,6 +240,8 @@ class GithubCache:
         while True:
             try:
                 github_tree = self.github_repo.get_git_tree(tree_id.decode())
+                assert (github_tree.sha.encode() == tree_id,
+                        f"bad data from github for tree {tree_id}")
                 raw_data: dict = github_tree.raw_data
                 break
             except RateLimitExceededException:
@@ -254,6 +258,8 @@ class GithubCache:
         while True:
             try:
                 github_blob = self.github_repo.get_git_blob(blob_id.decode())
+                assert (github_blob.sha.encode() == blob_id,
+                        f"bad data from github for blob {blob_id}")
                 raw_data: dict = github_blob.raw_data
                 break
             except RateLimitExceededException:
@@ -326,8 +332,9 @@ def recreate_commit(commit_json: dict) -> Commit:
     """
     date_format = '%Y-%m-%dT%H:%M:%SZ'
     commit = Commit()
-    # adapt in case this is a "pull request commit" json object instead of a
-    # "git commit" json object
+    # leftover hack: adapt in case this is a "pull request commit" json object
+    # instead of a "git commit" json object. they're equally good but the pull
+    # request ones have a bunch of extra data in them
     if 'commit' in commit_json:
         commit_json = commit_json['commit']
     commit.message = commit_json['message'].encode()
