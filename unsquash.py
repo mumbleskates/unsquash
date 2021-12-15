@@ -202,7 +202,8 @@ class GithubCache:
                 time.sleep(1)
                 now = datetime.utcnow()
                 waited = now - wait_start
-                progress.n = waited.total_seconds()
+                progress.n = max(waited.total_seconds(),
+                                 time_to_wait.total_seconds())
                 progress.refresh()
                 if waited > time_to_wait:
                     break
