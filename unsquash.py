@@ -463,7 +463,6 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
                 must_rewrite = True
                 pr_commits, was_cached = (
                     gh_db.pull_request_commits(pull_request_id))
-                pr_progress.update(1)
                 if not was_cached:
                     fetch_commit_progress.update(len(pr_commits))
                     pr_progress.refresh()
@@ -486,6 +485,7 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
                 current_commit.parents = (current_commit.parents
                                           + [merge_tip])
                 current_commit.committer = bot_email
+                pr_progress.update(1)
 
             # remap parent commits
             rewritten_parents = [
