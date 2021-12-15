@@ -16,6 +16,63 @@ from github import Github, RateLimitExceededException
 from tqdm import tqdm
 
 
+def main():
+    parser = argparse.ArgumentParser(
+        description="Unsquash squashed pull requests from a github-based repo")
+    parser.add_argument("--repo", type=str, required=True,
+                        help="The file path to the local git repo")
+    parser.add_argument("--github_repo", type=str, required=True,
+                        help="The repo/name of the project on github")
+    parser.add_argument("--no_github", action='store_true', default=False,
+                        help="Disable usage of the API, rely only on the cache")
+    parser.add_argument("--pr_db", type=str, default="pull_requests.db",
+                        help="The file path to the pull requests cache")
+    # TODO: enable using refs here so it can use bare repos and commits as well
+    parser.add_argument("--squashed_branch", type=str, default="master",
+                        help="The name of the branch to be unsquashed")
+    parser.add_argument("--unsquashed_branch", type=str, default=None,
+                        help="The name of the unsquashed branch to build or "
+                             "maintain. Defaults to 'unsquash-' + the name of "
+                             "the squashed branch.")
+    parser.add_argument("--unsquashed_committer", type=str,
+                        default="UnsquashBot <unsquashbot@example.com>",
+                        help="The committer line for the bot")
+    parser.add_argument("--token_file", type=str, default=None,
+                        help="File to read the github token from")
+    args = parser.parse_args()
+    bot_email = args.unsquashed_committer.encode()
+
+    repo = Repo(args.repo)
+
+    if args.unsquashed_branch is None:
+        args.unsquashed_branch = f"unsquash-{args.squashed_branch}"
+    unsquashed_ref = f"refs/heads/{args.unsquashed_branch}".encode()
+
+    try:
+        squashed_head = repo.refs[
+            f"refs/heads/{args.squashed_branch}".encode()]
+    except KeyError:
+        print(f"Squashed branch {repr(args.squashed_branch)} not found!")
+        sys.exit(1)
+
+    if args.no_github:
+        token = None
+    else:
+        if args.token_file is None:
+            token = getpass(prompt="github token: ")
+        else:
+            with open(args.token_file, 'r') as f:
+                token = f.read().strip()
+
+    with GithubCache(
+            db_path=args.pr_db,
+            github_repo_name=args.github_repo,
+            github_token=token) as gh_db:
+        rebuild_history(repo=repo, gh_db=gh_db, bot_email=bot_email,
+                        squashed_head=squashed_head,
+                        unsquashed_ref=unsquashed_ref)
+
+
 class GithubCache:
     def __init__(self, db_path: str, github_repo_name: str,
                  github_token: str | None):
@@ -326,63 +383,6 @@ def download_tree(repo: Repo, gh_db: GithubCache, tree_id: bytes,
                            f"{entry['type']} with mode {entry['mode']} "
                            f"in tree {tree_id}")
     repo.object_store.add_object(recreate_tree(gh_tree))
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Unsquash squashed pull requests from a github-based repo")
-    parser.add_argument("--repo", type=str, required=True,
-                        help="The file path to the local git repo")
-    parser.add_argument("--github_repo", type=str, required=True,
-                        help="The repo/name of the project on github")
-    parser.add_argument("--no_github", action='store_true', default=False,
-                        help="Disable usage of the API, rely only on the cache")
-    parser.add_argument("--pr_db", type=str, default="pull_requests.db",
-                        help="The file path to the pull requests cache")
-    # TODO: enable using refs here so it can use bare repos and commits as well
-    parser.add_argument("--squashed_branch", type=str, default="master",
-                        help="The name of the branch to be unsquashed")
-    parser.add_argument("--unsquashed_branch", type=str, default=None,
-                        help="The name of the unsquashed branch to build or "
-                             "maintain. Defaults to 'unsquash-' + the name of "
-                             "the squashed branch.")
-    parser.add_argument("--unsquashed_committer", type=str,
-                        default="UnsquashBot <unsquashbot@example.com>",
-                        help="The committer line for the bot")
-    parser.add_argument("--token_file", type=str, default=None,
-                        help="File to read the github token from")
-    args = parser.parse_args()
-    bot_email = args.unsquashed_committer.encode()
-
-    repo = Repo(args.repo)
-
-    if args.unsquashed_branch is None:
-        args.unsquashed_branch = f"unsquash-{args.squashed_branch}"
-    unsquashed_ref = f"refs/heads/{args.unsquashed_branch}".encode()
-
-    try:
-        squashed_head = repo.refs[
-            f"refs/heads/{args.squashed_branch}".encode()]
-    except KeyError:
-        print(f"Squashed branch {repr(args.squashed_branch)} not found!")
-        sys.exit(1)
-
-    if args.no_github:
-        token = None
-    else:
-        if args.token_file is None:
-            token = getpass(prompt="github token: ")
-        else:
-            with open(args.token_file, 'r') as f:
-                token = f.read().strip()
-
-    with GithubCache(
-            db_path=args.pr_db,
-            github_repo_name=args.github_repo,
-            github_token=token) as gh_db:
-        rebuild_history(repo=repo, gh_db=gh_db, bot_email=bot_email,
-                        squashed_head=squashed_head,
-                        unsquashed_ref=unsquashed_ref)
 
 
 def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
