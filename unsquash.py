@@ -34,13 +34,13 @@ def main():
                         help="The name of the unsquashed branch to build or "
                              "maintain. Defaults to 'unsquash-' + the name of "
                              "the squashed branch.")
-    parser.add_argument("--unsquashed_committer", type=str,
-                        default="UnsquashBot <unsquashbot@example.com>",
-                        help="The committer line for the bot")
+    parser.add_argument("--bot_email", type=str,
+                        default="unsquashbot@example.com",
+                        help="The email address in the bot's committer line")
     parser.add_argument("--token_file", type=str, default=None,
                         help="File to read the github token from")
     args = parser.parse_args()
-    bot_email = args.unsquashed_committer.encode()
+    unsquashed_committer = f'UnsquashBot <{args.bot_email}>'.encode()
 
     repo = Repo(args.repo)
 
@@ -68,7 +68,8 @@ def main():
             db_path=args.pr_db,
             github_repo_name=args.github_repo,
             github_token=token) as gh_db:
-        rebuild_history(repo=repo, gh_db=gh_db, bot_email=bot_email,
+        rebuild_history(repo=repo, gh_db=gh_db,
+                        unsquashed_committer=unsquashed_committer,
                         squashed_head=squashed_head,
                         unsquashed_ref=unsquashed_ref)
 
@@ -385,7 +386,7 @@ def download_tree(repo: Repo, gh_db: GithubCache, tree_id: bytes,
     repo.object_store.add_object(recreate_tree(gh_tree))
 
 
-def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
+def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
                     squashed_head: bytes, unsquashed_ref: bytes) -> None:
     try:
         unsquashed_head = repo.refs[unsquashed_ref]
@@ -484,7 +485,7 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
                 # convert this PR into a merge commit
                 current_commit.parents = (current_commit.parents
                                           + [merge_tip])
-                current_commit.committer = bot_email
+                current_commit.committer = unsquashed_committer
                 pr_progress.update(1)
 
             # remap parent commits
