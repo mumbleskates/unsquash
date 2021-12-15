@@ -441,6 +441,12 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
                 current_commit = recreate_commit(gh_json)
                 reconstructed = True
 
+            pull_request_id = detect_github_squash_commit(current_commit)
+            if pull_request_id is not None:
+                if pull_request_id not in known_pull_requests:
+                    known_pull_requests.add(pull_request_id)
+                    pr_progress.total += 1
+
             # parents of this commit need to be processed first
             parents_to_enqueue = [
                 parent_id for parent_id in current_commit.parents
@@ -453,11 +459,7 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
                 rewrite_progress.total += len(parents_to_enqueue)
                 continue
 
-            pull_request_id = detect_github_squash_commit(current_commit)
             if pull_request_id is not None:
-                if pull_request_id not in known_pull_requests:
-                    known_pull_requests.add(pull_request_id)
-                    pr_progress.total += 1
                 must_rewrite = True
                 pr_commits, was_cached = (
                     gh_db.pull_request_commits(pull_request_id))
