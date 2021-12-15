@@ -196,7 +196,7 @@ class GithubCache:
         wait_start = datetime.utcnow()
         time_to_wait = (rate_limit.core.reset - wait_start
                         + timedelta(seconds=10))
-        with tqdm(desc="waiting for rate limit",
+        with tqdm(desc="waiting for github API rate limit",
                   total=time_to_wait.total_seconds(), unit="s") as progress:
             while True:
                 time.sleep(1)
