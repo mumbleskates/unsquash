@@ -25,7 +25,13 @@ class GithubCache:
         """
         if github_token is not None:
             self.github = Github(github_token)
-            self.github_repo = self.github.get_repo(github_repo_name)
+            while True:
+                try:
+                    self.github_repo = self.github.get_repo(github_repo_name)
+                    break
+                except RateLimitExceededException:
+                    self._wait_for_rate_limit()
+
         self.db_path = db_path
         self.db = None
 
