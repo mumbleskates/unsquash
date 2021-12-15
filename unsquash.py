@@ -399,18 +399,19 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
         unsquashed_mapping = map_unsquashed_branch(repo, unsquashed_head)
 
     commit_stack = []
-    expected_squash_commits = 0
+    known_pull_requests = set()
     for walk in tqdm(repo.get_walker(squashed_head),
                      desc="crawling squashed branch", unit="commit"):
         if walk.commit.id not in unsquashed_mapping:
             commit_stack.append(walk.commit.id)
-            if detect_github_squash_commit(walk.commit):
-                expected_squash_commits += 1
+            pr_id = detect_github_squash_commit(walk.commit)
+            if pr_id is not None:
+                known_pull_requests.add(walk.commit.id)
 
     head_commit_id = None
     rewrite_progress = tqdm(total=len(commit_stack),
                             desc="unsquashing ", unit="commit")
-    pr_progress = tqdm(total=expected_squash_commits,
+    pr_progress = tqdm(total=len(known_pull_requests),
                        desc="squashed prs", unit="pr")
     fetch_commit_progress = tqdm(desc="fetching commits",
                                  unit="commit")
@@ -454,6 +455,9 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
 
             pull_request_id = detect_github_squash_commit(current_commit)
             if pull_request_id is not None:
+                if pull_request_id not in known_pull_requests:
+                    known_pull_requests.add(pull_request_id)
+                    pr_progress.total += 1
                 must_rewrite = True
                 pr_commits, was_cached = (
                     gh_db.pull_request_commits(pull_request_id))
