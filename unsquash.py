@@ -345,15 +345,6 @@ def main():
     if args.unsquashed_branch is None:
         args.unsquashed_branch = f"unsquash-{args.squashed_branch}"
     unsquashed_ref = f"refs/heads/{args.unsquashed_branch}".encode()
-    try:
-        unsquashed_head = repo.refs[unsquashed_ref]
-    except KeyError:
-        print("Unsquashed branch does not yet exist")
-        unsquashed_head = None
-        unsquashed_mapping = {}
-
-    if unsquashed_head is not None:
-        unsquashed_mapping = map_unsquashed_branch(repo, unsquashed_head)
 
     try:
         squashed_head = repo.refs[
@@ -377,13 +368,22 @@ def main():
             github_token=token) as gh_db:
         rebuild_history(repo=repo, gh_db=gh_db, bot_email=bot_email,
                         squashed_head=squashed_head,
-                        unsquashed_ref=unsquashed_ref,
-                        unsquashed_mapping=unsquashed_mapping)
+                        unsquashed_ref=unsquashed_ref)
 
 
 def rebuild_history(repo: Repo, gh_db: GithubCache, bot_email: bytes,
-                    squashed_head: bytes, unsquashed_ref: bytes,
-                    unsquashed_mapping: dict[bytes, bytes]) -> None:
+                    squashed_head: bytes, unsquashed_ref: bytes) -> None:
+    try:
+        unsquashed_head = repo.refs[unsquashed_ref]
+    except KeyError:
+        print("Unsquashed branch does not yet exist")
+        unsquashed_head = None
+
+    if unsquashed_head is None:
+        unsquashed_mapping = {}
+    else:
+        unsquashed_mapping = map_unsquashed_branch(repo, unsquashed_head)
+
     commit_stack = []
     expected_squash_commits = 0
     for walk in tqdm(repo.get_walker(squashed_head),
