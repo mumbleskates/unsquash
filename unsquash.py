@@ -407,7 +407,7 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
             commit_stack.append(walk.commit.id)
             pr_id = detect_github_squash_commit(walk.commit)
             if pr_id is not None:
-                known_pull_requests.add(walk.commit.id)
+                known_pull_requests.add(pr_id)
 
     head_commit_id = None
     rewrite_progress = tqdm(total=len(commit_stack),
@@ -443,10 +443,12 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
                 reconstructed = True
 
             pull_request_id = detect_github_squash_commit(current_commit)
-            if pull_request_id is not None:
-                if pull_request_id not in known_pull_requests:
-                    known_pull_requests.add(pull_request_id)
-                    pr_progress.total += 1
+            if (
+                    pull_request_id is not None
+                    and pull_request_id not in known_pull_requests
+            ):
+                known_pull_requests.add(pull_request_id)
+                pr_progress.total += 1
 
             # parents of this commit need to be processed first
             parents_to_enqueue = [
