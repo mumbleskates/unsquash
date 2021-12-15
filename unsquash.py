@@ -120,9 +120,22 @@ class GithubCache:
         commits = []
 
         def gen_commits():
-            for commit in github_pull_request.get_commits():
+            # the paginated list class in the github library is pretty fragile
+            # against errors during iteration, so get the pages all at once
+            while True:
+                try:
+                    all_commits = list(github_pull_request.get_commits())
+                    break
+                except RateLimitExceededException:
+                    self._wait_for_rate_limit()
+            for commit in all_commits:
                 commits.append(commit.sha)
-                raw_data = json.dumps(commit.raw_data)
+                while True:
+                    try:
+                        raw_data = json.dumps(commit.raw_data)
+                        break
+                    except RateLimitExceededException:
+                        self._wait_for_rate_limit()
                 yield commit.sha, raw_data
 
         with self.db as cursor:
@@ -143,10 +156,10 @@ class GithubCache:
             try:
                 github_commit = self.github_repo.get_git_commit(
                     commit_id.decode())
+                raw_data = github_commit.raw_data
                 break
             except RateLimitExceededException:
                 self._wait_for_rate_limit()
-        raw_data = github_commit.raw_data
         cursor.execute("""
             INSERT INTO objects(id, json) VALUES (?, ?);
         """, (github_commit.sha, json.dumps(raw_data)))
@@ -156,10 +169,10 @@ class GithubCache:
         while True:
             try:
                 github_tree = self.github_repo.get_git_tree(tree_id.decode())
+                raw_data = github_tree.raw_data
                 break
             except RateLimitExceededException:
                 self._wait_for_rate_limit()
-        raw_data = github_tree.raw_data
         cursor.execute("""
             INSERT INTO objects(id, json) VALUES (?, ?);
         """, (github_tree.sha, json.dumps(raw_data)))
@@ -169,10 +182,10 @@ class GithubCache:
         while True:
             try:
                 github_blob = self.github_repo.get_git_blob(blob_id.decode())
+                raw_data = github_blob.raw_data
                 break
             except RateLimitExceededException:
                 self._wait_for_rate_limit()
-        raw_data = github_blob.raw_data
         cursor.execute("""
             INSERT INTO objects(id, json) VALUES (?, ?);
         """, (github_blob.sha, json.dumps(raw_data)))
