@@ -69,23 +69,25 @@ def main():
 
     repo = Repo(args.repo)
 
-    if args.squashed_branch is not None and args.squashed_ref is not None:
-        print("Please provide at most one of --squashed_branch and "
-              "--squashed_ref.")
-        sys.exit(1)
     if args.unsquashed_branch is not None and args.unsquashed_ref is not None:
         print("Please provide at most one of --unsquashed_branch and "
               "--unsquashed_ref.")
         sys.exit(1)
 
-    if args.squashed_branch is None and args.squashed_ref is None:
-        squashed_ref = b"refs/heads/master"
-    elif args.squashed_branch is not None:
+    if args.squashed_branch is not None and args.squashed_ref is not None:
+        print("Please provide at most one of --squashed_branch and "
+              "--squashed_ref.")
+        sys.exit(1)
+    elif args.squashed_branch is None and args.squashed_ref is None:
+        args.squashed_branch = "master"  # default to master branch
+
+    if args.squashed_branch is not None:
         squashed_ref = f"refs/heads/{args.squashed_branch}".encode()
     else:
         squashed_ref = args.squashed_ref.encode()
 
     if args.unsquashed_branch is None and args.unsquashed_ref is None:
+        # unsquashed ref defaults to a rename of the squashed branch
         if args.squashed_branch is None:
             print("When no --squashed_branch is given, one of "
                   "--unsquashed_branch and --unsquashed_ref must be given.")
