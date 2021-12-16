@@ -23,6 +23,10 @@ def main():
                         help="The file path to the local git repo.")
     parser.add_argument("--github_repo", required=True,
                         help="The repo/name of the project on github.")
+    parser.add_argument("--token_file", default=None,
+                        help="The file to read the github token from. If this "
+                             "is not given, you will be asked to enter/paste "
+                             "the token like a password when the tool runs.")
     parser.add_argument("--no_github", action='store_true', default=False,
                         help="Disable usage of the API, relying only on the "
                              "cache. The script will crash if any data needs "
@@ -68,8 +72,6 @@ def main():
     parser.add_argument("--bot_email", 
                         default="unsquashbot@example.com",
                         help="The email address in the bot's committer line.")
-    parser.add_argument("--token_file", default=None,
-                        help="The file to read the github token from.")
     args = parser.parse_args()
     unsquashed_committer = f"UnsquashBot <{args.bot_email}>".encode()
 
