@@ -34,7 +34,7 @@ def main():
                         help="The name of the unsquashed branch to build or "
                              "maintain. Defaults to 'unsquash-' + the name of "
                              "the squashed branch.")
-    parser.add_argument("--also_map", action='append',
+    parser.add_argument("--also_map", action='append', default=[],
                         help="Additional branches to map before beginning the "
                              "unsquash process. Helpful when one branch is"
                              "already unsquashed and you want its commits to "
