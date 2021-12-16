@@ -134,8 +134,8 @@ def main():
     try:
         squashed_head = repo.refs[squashed_ref]
     except KeyError:
-        # we need the squashed branch, otherwise there's nothing to recreate
-        print(f"Squashed branch {repr(args.squashed_branch)} not found!")
+        # we need the squashed ref, otherwise there's nothing to recreate
+        print(f"Squashed ref {squashed_ref} not found!")
         sys.exit(1)
 
     if args.no_github:
