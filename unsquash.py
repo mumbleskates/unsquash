@@ -233,8 +233,8 @@ class GithubCache:
             try:
                 github_commit = self.github_repo.get_git_commit(
                     commit_id.decode())
-                assert (github_commit.sha.encode() == commit_id,
-                        f"bad data from github for commit {commit_id}")
+                assert github_commit.sha.encode() == commit_id, (
+                    f"bad data from github for commit {commit_id}")
                 raw_data: dict = github_commit.raw_data
                 break
             except RateLimitExceededException:
@@ -251,8 +251,8 @@ class GithubCache:
         while True:
             try:
                 github_tree = self.github_repo.get_git_tree(tree_id.decode())
-                assert (github_tree.sha.encode() == tree_id,
-                        f"bad data from github for tree {tree_id}")
+                assert github_tree.sha.encode() == tree_id, (
+                    f"bad data from github for tree {tree_id}")
                 raw_data: dict = github_tree.raw_data
                 break
             except RateLimitExceededException:
@@ -269,8 +269,8 @@ class GithubCache:
         while True:
             try:
                 github_blob = self.github_repo.get_git_blob(blob_id.decode())
-                assert (github_blob.sha.encode() == blob_id,
-                        f"bad data from github for blob {blob_id}")
+                assert github_blob.sha.encode() == blob_id, (
+                    f"bad data from github for blob {blob_id}")
                 raw_data: dict = github_blob.raw_data
                 break
             except RateLimitExceededException:
