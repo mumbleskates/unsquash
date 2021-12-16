@@ -24,7 +24,9 @@ def main():
     parser.add_argument("--github_repo", required=True,
                         help="The repo/name of the project on github.")
     parser.add_argument("--no_github", action='store_true', default=False,
-                        help="Disable usage of the API, rely only on the cache")
+                        help="Disable usage of the API, relying only on the "
+                             "cache. The script will crash if any data needs "
+                             "to be fetched from the API.")
     parser.add_argument("--pr_db", default="pull_requests.db",
                         help="The file path to the pull requests cache.")
     parser.add_argument("--squashed_branch", default=None,
@@ -40,7 +42,7 @@ def main():
                              "maintain. Defaults to 'unsquash-' + the name of "
                              "the squashed branch.")
     parser.add_argument("--unsquashed_ref", default=None,
-                        help="The name of the unsquashed ref to build or"
+                        help="The name of the unsquashed ref to build or "
                              "maintain. Like --unsquashed_branch, but "
                              "specifies long-form refs, like "
                              "'refs/heads/unsquash-master' instead of "
@@ -49,15 +51,19 @@ def main():
                              "given.")
     parser.add_argument("--also_map_branch", action='append', default=[],
                         help="Additional branches to map before beginning the "
-                             "unsquash process. Helpful when one branch is"
-                             "already unsquashed and you want its commits to "
-                             "be reused for a second, related branch; simply "
-                             "unsquash into the new branch and list any "
-                             "already-unsquashed branches you want to include "
-                             "as an --also_map_branch argument.")
+                             "unsquash process. All mapped commits will be "
+                             "kept as-is, and also stand in for the commits "
+                             "referred to by the 'unsquashbot_original_commit' "
+                             "trailer value in the commit message. Helpful "
+                             "when one branch is already unsquashed and you "
+                             "want its commits to be reused for a second, "
+                             "related branch; simply unsquash into the new "
+                             "branch and list any already-unsquashed branches "
+                             "you want to include as an --also_map_branch "
+                             "argument.")
     parser.add_argument("--also_map_ref", action='append', default=[],
-                        help="Like --also_map_branch, but specifies long-form"
-                             "refs, like 'refs/heads/master' instead of"
+                        help="Like --also_map_branch, but specifies long-form "
+                             "refs, like 'refs/heads/master' instead of "
                              "'master'.")
     parser.add_argument("--bot_email", 
                         default="unsquashbot@example.com",
@@ -80,8 +86,7 @@ def main():
         sys.exit(1)
     elif args.squashed_branch is None and args.squashed_ref is None:
         args.squashed_branch = "master"  # default to master branch
-
-    if args.squashed_branch is not None:
+    elif args.squashed_branch is not None:
         squashed_ref = f"refs/heads/{args.squashed_branch}".encode()
     else:
         squashed_ref = args.squashed_ref.encode()
