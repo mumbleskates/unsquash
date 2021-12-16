@@ -18,50 +18,93 @@ from tqdm import tqdm
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Unsquash squashed pull requests from a github-based repo")
-    parser.add_argument("--repo", type=str, required=True,
-                        help="The file path to the local git repo")
-    parser.add_argument("--github_repo", type=str, required=True,
-                        help="The repo/name of the project on github")
+        description="Unsquash squashed pull requests from a github-based repo.")
+    parser.add_argument("--repo", required=True,
+                        help="The file path to the local git repo.")
+    parser.add_argument("--github_repo", required=True,
+                        help="The repo/name of the project on github.")
     parser.add_argument("--no_github", action='store_true', default=False,
                         help="Disable usage of the API, rely only on the cache")
-    parser.add_argument("--pr_db", type=str, default="pull_requests.db",
-                        help="The file path to the pull requests cache")
-    # TODO: enable using refs here so it can use bare repos and commits as well
-    parser.add_argument("--squashed_branch", type=str, default="master",
-                        help="The name of the branch to be unsquashed")
-    parser.add_argument("--unsquashed_branch", type=str, default=None,
+    parser.add_argument("--pr_db", default="pull_requests.db",
+                        help="The file path to the pull requests cache.")
+    parser.add_argument("--squashed_branch", default=None,
+                        help="The name of the branch to be unsquashed.")
+    parser.add_argument("--squashed_ref", default=None,
+                        help="The name of the ref to be unsquashed. Like "
+                             "--squashed_branch, but specifies long-form refs "
+                             "like 'refs/heads/master' instead of 'master'. "
+                             "At most one of --squashed_branch and "
+                             "--squashed_ref may be given.")
+    parser.add_argument("--unsquashed_branch", default=None,
                         help="The name of the unsquashed branch to build or "
                              "maintain. Defaults to 'unsquash-' + the name of "
                              "the squashed branch.")
-    parser.add_argument("--also_map", action='append', default=[],
+    parser.add_argument("--unsquashed_ref", default=None,
+                        help="The name of the unsquashed ref to build or"
+                             "maintain. Like --unsquashed_branch, but "
+                             "specifies long-form refs, like "
+                             "'refs/heads/unsquash-master' instead of "
+                             "'unsquash-master'. At most one of "
+                             "--unsquashed_branch and --unsquashed_ref may be "
+                             "given.")
+    parser.add_argument("--also_map_branch", action='append', default=[],
                         help="Additional branches to map before beginning the "
                              "unsquash process. Helpful when one branch is"
                              "already unsquashed and you want its commits to "
                              "be reused for a second, related branch; simply "
                              "unsquash into the new branch and list any "
                              "already-unsquashed branches you want to include "
-                             "as an --also_map argument.")
-    parser.add_argument("--bot_email", type=str,
+                             "as an --also_map_branch argument.")
+    parser.add_argument("--also_map_ref", action='append', default=[],
+                        help="Like --also_map_branch, but specifies long-form"
+                             "refs, like 'refs/heads/master' instead of"
+                             "'master'.")
+    parser.add_argument("--bot_email", 
                         default="unsquashbot@example.com",
-                        help="The email address in the bot's committer line")
-    parser.add_argument("--token_file", type=str, default=None,
-                        help="File to read the github token from")
+                        help="The email address in the bot's committer line.")
+    parser.add_argument("--token_file", default=None,
+                        help="The file to read the github token from.")
     args = parser.parse_args()
-    unsquashed_committer = f'UnsquashBot <{args.bot_email}>'.encode()
+    unsquashed_committer = f"UnsquashBot <{args.bot_email}>".encode()
 
     repo = Repo(args.repo)
 
-    if args.unsquashed_branch is None:
-        args.unsquashed_branch = f"unsquash-{args.squashed_branch}"
-    unsquashed_ref = f"refs/heads/{args.unsquashed_branch}".encode()
-    refs_to_map = [unsquashed_ref, *(f"refs/heads/{also}".encode()
-                                     for also in args.also_map)]
+    if args.squashed_branch is not None and args.squashed_ref is not None:
+        print("Please provide at most one of --squashed_branch and "
+              "--squashed_ref.")
+        sys.exit(1)
+    if args.unsquashed_branch is not None and args.unsquashed_ref is not None:
+        print("Please provide at most one of --unsquashed_branch and "
+              "--unsquashed_ref.")
+        sys.exit(1)
+
+    if args.squashed_branch is None and args.squashed_ref is None:
+        squashed_ref = b"refs/heads/master"
+    elif args.squashed_branch is not None:
+        squashed_ref = f"refs/heads/{args.squashed_branch}".encode()
+    else:
+        squashed_ref = args.squashed_ref.encode()
+
+    if args.unsquashed_branch is None and args.unsquashed_ref is None:
+        if args.squashed_branch is None:
+            print("When no --squashed_branch is given, one of "
+                  "--unsquashed_branch and --unsquashed_ref must be given.")
+            sys.exit(1)
+        unsquashed_ref = f"refs/heads/unsquash-{args.squashed_branch}".encode()
+    elif args.unsquashed_branch is not None:
+        unsquashed_ref = f"refs/heads/{args.unsquashed_branch}".encode()
+    else:
+        unsquashed_ref = args.unsquashed_ref.encode()
+
+    refs_to_map = [unsquashed_ref,
+                   *(f"refs/heads/{also}".encode()
+                     for also in args.also_map_branch),
+                   *(also.encode() for also in args.also_map_ref)]
 
     try:
-        squashed_head = repo.refs[
-            f"refs/heads/{args.squashed_branch}".encode()]
+        squashed_head = repo.refs[squashed_ref]
     except KeyError:
+        # we need the squashed branch, otherwise there's nothing to recreate
         print(f"Squashed branch {repr(args.squashed_branch)} not found!")
         sys.exit(1)
 
@@ -303,7 +346,7 @@ def detect_github_squash_commit(commit: Commit) -> int | None:
     Returns the pull request number if this looks like a squash commit,
     otherwise returns None.
     """
-    if commit.committer != b'GitHub <noreply@github.com>':
+    if commit.committer != b"GitHub <noreply@github.com>":
         return None  # squashes are committed by github
     if len(commit.parents) > 1:
         return None  # squashes aren't merge commits
@@ -316,7 +359,7 @@ def detect_original_commit(commit: Commit) -> bytes | None:
     Returns the commit id of the original commit if this is an unsquashed
     commit, otherwise returns None.
     """
-    match = re.search(rb'\nunsquashbot_original_commit=([0-9a-f]+)\n$',
+    match = re.search(rb"\nunsquashbot_original_commit=([0-9a-f]+)\n$",
                       commit.message, re.MULTILINE)
     return match and match.group(1)
 
@@ -341,7 +384,7 @@ def recreate_commit(commit_json: dict) -> Commit:
     """
     Recreate a commit object approximately from github api json.
     """
-    date_format = '%Y-%m-%dT%H:%M:%SZ'
+    date_format = "%Y-%m-%dT%H:%M:%SZ"
     commit = Commit()
     # leftover hack: adapt in case this is a "pull request commit" json object
     # instead of a "git commit" json object. they're equally good but the pull
@@ -554,11 +597,11 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
                               fetch_obj_progress)
             current_commit.message = b''.join([
                 current_commit.message.rstrip(),
-                b'\n\n',
-                b'unsquashbot_reconstructed\n' * reconstructed,
-                b'unsquashbot_original_commit=',
+                b"\n\n",
+                b"unsquashbot_reconstructed\n" * reconstructed,
+                b"unsquashbot_original_commit=",
                 current_commit_id,
-                b'\n',
+                b"\n",
             ])
             # insert into the mapping with the commit's new id
             head_commit_id = current_commit.id
