@@ -15,6 +15,27 @@ from dulwich.repo import Repo
 from github import Github, RateLimitExceededException
 from tqdm import tqdm
 
+__doc__ = """
+-- GitHub Unsquasher --
+This tool rewrites git history for github-hosted repositories, rewriting the
+history as if your pull request squash commits were all merges instead and
+pulling in all the commits of those pull requests into this new branch.
+
+While the commits themselves cannot be exactly reproduced, they were going to be
+rewritten anyway, and the content of the repository is precisely the same. Every
+commit, even if its branch was long deleted or never present in your copy of the
+repo, has its files and trees exactly reproduced (assuming github's API is
+willing to serve the complete data; if you have file versions over 100MB that
+are not already in your repo, this might not work).
+
+This tool can be rerun repeatedly, maintaining an unsquashed branch by updating
+only new commits from the repository! This gives a complete accounting of what
+actually happened, complete with a more comprehensive 'git blame' output for
+all your files. Not only that, but checking out the unsquashed branch is almost
+instant, since when it is up to date it refers to the exact same tree as the
+unsquashed branch.
+"""
+
 
 def main():
     parser = argparse.ArgumentParser(
