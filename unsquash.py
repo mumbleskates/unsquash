@@ -321,11 +321,11 @@ def detect_original_commit(commit: Commit) -> bytes | None:
     return match and match.group(1)
 
 
-def map_unsquashed_refs(repo: Repo, heads: list[bytes]) -> dict[bytes, bytes]:
+def map_unsquashed_refs(repo: Repo, refs: list[bytes]) -> dict[bytes, bytes]:
     # mapping from original commit id to unsquashed branch commit id
     unsquashed_mapping = {}
     num_rewritten = 0
-    for walk in tqdm(repo.get_walker(include=heads),
+    for walk in tqdm(repo.get_walker(include=[repo.refs[ref] for ref in refs]),
                      desc="mapping unsquashed commits", unit="commit"):
         original_commit_id = detect_original_commit(walk.commit)
         if original_commit_id:
