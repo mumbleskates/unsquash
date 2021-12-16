@@ -321,11 +321,11 @@ def detect_original_commit(commit: Commit) -> bytes | None:
     return match and match.group(1)
 
 
-def map_unsquashed_refs(repo: Repo, refs: list[bytes]) -> dict[bytes, bytes]:
+def map_unsquashed(repo: Repo, heads: list[bytes]) -> dict[bytes, bytes]:
     # mapping from original commit id to unsquashed branch commit id
     unsquashed_mapping = {}
     num_rewritten = 0
-    for walk in tqdm(repo.get_walker(include=[repo.refs[ref] for ref in refs]),
+    for walk in tqdm(repo.get_walker(include=heads),
                      desc="mapping unsquashed commits", unit="commit"):
         original_commit_id = detect_original_commit(walk.commit)
         if original_commit_id:
@@ -425,16 +425,17 @@ def download_tree(repo: Repo, gh_db: GithubCache, tree_id: bytes,
 def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
                     squashed_head: bytes, refs_to_map: list[bytes],
                     unsquashed_ref: bytes) -> None:
-    try:
-        unsquashed_head = repo.refs[unsquashed_ref]
-    except KeyError:
-        print("Unsquashed branch does not yet exist")
-        unsquashed_head = None
+    heads = []
+    for ref in refs_to_map:
+        try:
+            heads.append(repo.refs[ref])
+        except KeyError:
+            print(f"Ref {ref.decode()} not found in the repo")
 
-    if unsquashed_head is None:
-        unsquashed_mapping = {}
+    if heads:
+        unsquashed_mapping = map_unsquashed(repo=repo, heads=heads)
     else:
-        unsquashed_mapping = map_unsquashed_refs(repo, refs_to_map)
+        unsquashed_mapping = {}
 
     commit_stack = []
     known_pull_requests = set()
@@ -445,6 +446,10 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
             pr_id = detect_github_squash_commit(walk.commit)
             if pr_id is not None:
                 known_pull_requests.add(pr_id)
+
+    if not commit_stack:
+        print("Nothing to do")
+        return
 
     head_commit_id = None
     rewrite_progress = tqdm(total=len(commit_stack),
