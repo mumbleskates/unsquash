@@ -109,7 +109,8 @@ def main():
         sys.exit(1)
     elif args.squashed_branch is None and args.squashed_ref is None:
         args.squashed_branch = "master"  # default to master branch
-    elif args.squashed_branch is not None:
+
+    if args.squashed_branch is not None:
         squashed_ref = f"refs/heads/{args.squashed_branch}".encode()
     else:
         squashed_ref = args.squashed_ref.encode()
