@@ -127,10 +127,9 @@ def main():
     else:
         unsquashed_ref = args.unsquashed_ref.encode()
 
-    refs_to_map = [unsquashed_ref,
-                   *(f"refs/heads/{also}".encode()
-                     for also in args.also_map_branch),
-                   *(also.encode() for also in args.also_map_ref)]
+    also_map_refs = [*(f"refs/heads/{also}".encode()
+                       for also in args.also_map_branch),
+                     *(also.encode() for also in args.also_map_ref)]
 
     try:
         squashed_head = repo.refs[squashed_ref]
@@ -155,8 +154,8 @@ def main():
         rebuild_history(repo=repo, gh_db=gh_db,
                         unsquashed_committer=unsquashed_committer,
                         squashed_head=squashed_head,
-                        refs_to_map=refs_to_map,
-                        unsquashed_ref=unsquashed_ref)
+                        unsquashed_ref=unsquashed_ref,
+                        also_map_refs=also_map_refs)
 
 
 class GithubCache:
@@ -497,17 +496,24 @@ def download_tree(repo: Repo, gh_db: GithubCache, tree_id: bytes,
 
 
 def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
-                    squashed_head: bytes, refs_to_map: list[bytes],
-                    unsquashed_ref: bytes) -> None:
-    heads = []
-    for ref in refs_to_map:
+                    squashed_head: bytes, unsquashed_ref: bytes,
+                    also_map_refs: list[bytes]) -> None:
+    map_heads = []
+    for ref in [unsquashed_ref, *also_map_refs]:
         try:
-            heads.append(repo.refs[ref])
+            head = repo.refs[ref]
+            map_heads.append(head)
+            if squashed_head == (detect_original_commit(repo[head]) or head):
+                print(f"Already up to date in {ref.decode()}")
+                if ref != unsquashed_ref:
+                    print("Updating unsquashed ref")
+                    repo[unsquashed_ref] = head
+                return
         except KeyError:
             print(f"Ref {ref.decode()} not found in the repo")
 
-    if heads:
-        unsquashed_mapping = map_unsquashed(repo=repo, heads=heads)
+    if map_heads:
+        unsquashed_mapping = map_unsquashed(repo=repo, heads=map_heads)
     else:
         unsquashed_mapping = {}
 
@@ -520,10 +526,6 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
             pr_id = detect_github_squash_commit(walk.commit)
             if pr_id is not None:
                 known_pull_requests.add(pr_id)
-
-    if not commit_stack:
-        print("Nothing to do")
-        return
 
     head_commit_id = None
     rewrite_progress = tqdm(total=len(commit_stack),
@@ -643,7 +645,7 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
     finally:
         close_progress_bars()
         if head_commit_id is not None:
-            print("Updating unsquashed branch head")
+            print("Updating unsquashed ref")
             repo.refs[unsquashed_ref] = head_commit_id
 
 
