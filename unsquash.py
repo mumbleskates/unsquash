@@ -417,6 +417,7 @@ def recreate_commit(commit_json: dict) -> Commit:
     """
     date_format = "%Y-%m-%dT%H:%M:%SZ"
     commit = Commit()
+    commit.parents = [p['sha'].encode() for p in commit_json['parents']]
     # leftover hack: adapt in case this is a "pull request commit" json object
     # instead of a "git commit" json object. they're equally good but the pull
     # request ones have a bunch of extra data in them
@@ -437,7 +438,6 @@ def recreate_commit(commit_json: dict) -> Commit:
     commit.commit_time = int(commit_time.timestamp())
     commit.commit_timezone = 0
     commit.tree = commit_json['tree']['sha'].encode()
-    commit.parents = [p['sha'].encode() for p in commit_json['parents']]
     return commit
 
 
