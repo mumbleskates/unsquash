@@ -54,26 +54,24 @@ def main():
                              "to be fetched from the API.")
     parser.add_argument("--pr_db", default="pull_requests.db",
                         help="The file path to the pull requests cache.")
-    parser.add_argument("--squashed_branch", default=None,
-                        help="The name of the branch to be unsquashed.")
-    parser.add_argument("--squashed_ref", default=None,
-                        help="The name of the ref to be unsquashed. Like "
-                             "--squashed_branch, but specifies long-form refs "
-                             "like 'refs/heads/master' instead of 'master'. "
-                             "At most one of --squashed_branch and "
-                             "--squashed_ref may be given.")
-    parser.add_argument("--unsquashed_branch", default=None,
-                        help="The name of the unsquashed branch to build or "
-                             "maintain. Defaults to 'unsquash-' + the name of "
-                             "the squashed branch.")
-    parser.add_argument("--unsquashed_ref", default=None,
-                        help="The name of the unsquashed ref to build or "
-                             "maintain. Like --unsquashed_branch, but "
-                             "specifies long-form refs, like "
-                             "'refs/heads/unsquash-master' instead of "
-                             "'unsquash-master'. At most one of "
-                             "--unsquashed_branch and --unsquashed_ref may be "
-                             "given.")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--squashed_branch", default=None,
+                       help="The name of the branch to be unsquashed.")
+    group.add_argument("--squashed_ref", default=None,
+                       help="The name of the ref to be unsquashed. Like "
+                            "--squashed_branch, but specifies long-form refs "
+                            "like 'refs/heads/master' instead of 'master'.")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--unsquashed_branch", default=None,
+                       help="The name of the unsquashed branch to build or "
+                            "maintain. Defaults to 'unsquash-' + the name of "
+                            "the squashed branch.")
+    group.add_argument("--unsquashed_ref", default=None,
+                       help="The name of the unsquashed ref to build or "
+                            "maintain. Like --unsquashed_branch, but "
+                            "specifies long-form refs, like "
+                            "'refs/heads/unsquash-master' instead of "
+                            "'unsquash-master'.")
     parser.add_argument("--also_map_branch", action='append', default=[],
                         help="Additional branches to map before beginning the "
                              "unsquash process. All mapped commits will be "
@@ -90,7 +88,7 @@ def main():
                         help="Like --also_map_branch, but specifies long-form "
                              "refs, like 'refs/heads/master' instead of "
                              "'master'.")
-    parser.add_argument("--bot_email", 
+    parser.add_argument("--bot_email",
                         default="unsquashbot@example.com",
                         help="The email address in the bot's committer line.")
     args = parser.parse_args()
@@ -98,16 +96,7 @@ def main():
 
     repo = Repo(args.repo)
 
-    if args.unsquashed_branch is not None and args.unsquashed_ref is not None:
-        print("Please provide at most one of --unsquashed_branch and "
-              "--unsquashed_ref.")
-        sys.exit(1)
-
-    if args.squashed_branch is not None and args.squashed_ref is not None:
-        print("Please provide at most one of --squashed_branch and "
-              "--squashed_ref.")
-        sys.exit(1)
-    elif args.squashed_branch is None and args.squashed_ref is None:
+    if args.squashed_branch is None and args.squashed_ref is None:
         args.squashed_branch = "master"  # default to master branch
 
     if args.squashed_branch is not None:
@@ -397,13 +386,13 @@ def detect_original_commit(commit: Commit) -> bytes | None:
 def map_unsquashed(repo: Repo, heads: list[bytes]) -> dict[bytes, bytes]:
     # mapping from original commit id to unsquashed branch commit id
     unsquashed_mapping = {}
-    num_rewritten = 0
+    if not heads:
+        return unsquashed_mapping
     for walk in tqdm(repo.get_walker(include=heads),
                      desc="mapping unsquashed commits", unit="commit"):
         original_commit_id = detect_original_commit(walk.commit)
         if original_commit_id:
             unsquashed_mapping[original_commit_id] = walk.commit.id
-            num_rewritten += 1
         else:
             # not rewritten, commit is unchanged
             unsquashed_mapping[walk.commit.id] = walk.commit.id
