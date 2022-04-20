@@ -236,12 +236,14 @@ class GithubCache:
                     return  # end of history
                 yield from page
 
+        done = False
         for pull in all_pulls():
             update_progress.update(1)
             while True:
                 try:
                     with self.db as cursor:
                         if pull.updated_at < target_timestamp:
+                            done = True
                             break
                         new_updated = max(new_updated, pull.updated_at)
                         [[already_have]] = cursor.execute("""
@@ -277,7 +279,8 @@ class GithubCache:
                     self._wait_for_rate_limit()
                     continue
                 break
-
+            if done:
+                break
         with self.db as cursor:
             cursor.execute("""
                 INSERT INTO updates(project, update_timestamp) VALUES (?, ?);
