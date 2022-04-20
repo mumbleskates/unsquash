@@ -4,15 +4,17 @@ import argparse
 from base64 import b64decode
 from datetime import datetime, timedelta
 from getpass import getpass
+from itertools import count
 import json
 import re
 import sqlite3
 import sys
 import time
+from typing import Generator
 
 from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import Repo
-from github import Github, RateLimitExceededException
+from github import Github, PullRequest, RateLimitExceededException
 from tqdm import tqdm
 
 __doc__ = """
@@ -35,6 +37,8 @@ all your files. Not only that, but checking out the unsquashed branch is almost
 instant, since when it is up to date it refers to the exact same tree as the
 unsquashed branch.
 """
+
+GITHUB_DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def main():
@@ -160,6 +164,8 @@ class GithubCache:
             while True:
                 try:
                     self.github_repo = self.github.get_repo(github_repo_name)
+                    self.github_repo.get_pulls(state="closed", sort="updated",
+                                               direction="desc")
                     break
                 except RateLimitExceededException:
                     self._wait_for_rate_limit()
@@ -179,10 +185,21 @@ class GithubCache:
                     commits_json TEXT NOT NULL,
                     PRIMARY KEY (project, id)
                 );
+                CREATE UNIQUE INDEX IF NOT EXISTS pull_request_tips
+                    ON pull_requests(
+                        project,
+                        json_extract(pr_json, '$.merge_commit_sha')
+                    );
                 CREATE TABLE IF NOT EXISTS objects(
                     id TEXT PRIMARY KEY,
                     json TEXT NOT NULL
                 ) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS updates(
+                    project TEXT NOT NULL,
+                    update_timestamp REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS updates_timestamps
+                    ON updates(project, update_timestamp);
             """)
         return self
 
@@ -190,25 +207,97 @@ class GithubCache:
         self.db.close()
         self.db = None
 
-    def pull_request(self, pull_request_id: int) -> ((dict, list[bytes]), bool):
+    def update_pull_requests(self, update_progress: tqdm):
         """
-        Returns ((pull request json, list of commit ids), bool of whether this
-        pr was cached).
+        Update the database of merged pull requests to current.
+        """
+        with self.db as cursor:
+            [[last_updated]] = cursor.execute("""
+                SELECT max(update_timestamp) FROM updates WHERE project = ?;
+            """, (self.github_repo_name,))
+
+        if last_updated is None:
+            target_timestamp = datetime.min
+        else:
+            target_timestamp = datetime.fromtimestamp(last_updated)
+        new_updated: datetime = datetime.min  # new last-updated timestamp
+
+        def all_pulls() -> Generator[PullRequest]:
+            pulls = self.github_repo.get_pulls(
+                state='closed', sort='updated', direction='desc')
+            for page_num in count():
+                while True:
+                    try:
+                        page = pulls.get_page(page_num)
+                        break
+                    except RateLimitExceededException:
+                        self._wait_for_rate_limit()
+                yield from page
+
+        for pull in all_pulls():
+            update_progress.update(1)
+            while True:
+                try:
+                    with self.db as cursor:
+                        if pull.updated_at < target_timestamp:
+                            break
+                        new_updated = max(new_updated, pull.updated_at)
+                        [[already_have]] = cursor.execute("""
+                            SELECT COUNT(*) > 0
+                            FROM pull_requests
+                            WHERE project = ? AND id = ?;
+                        """, (self.github_repo_name, pull.id))
+                        if (
+                                already_have or
+                                pull.state != 'closed' or
+                                not pull.merged
+                        ):
+                            break  # only store new, merged PRs
+                        raw_data: dict = pull.raw_data
+                        commits: list[str] = [
+                            c.sha for c in pull.get_commits()
+                        ]
+                        cursor.execute("""
+                            INSERT INTO pull_requests(
+                                project,
+                                id,
+                                pr_json,
+                                commits_json
+                            )
+                            VALUES (?, ?, ?, ?);
+                        """, (
+                            self.github_repo_name,
+                            pull.id,
+                            json.dumps(raw_data),
+                            json.dumps(commits)
+                        ))
+                except RateLimitExceededException:
+                    self._wait_for_rate_limit()
+                    continue
+                break
+
+        with self.db as cursor:
+            cursor.execute("""
+                INSERT INTO updates(update_timestamp) VALUES (?);
+            """, (new_updated,))
+
+    def pull_request(self, pull_request_commit: bytes) -> (dict, list[bytes]):
+        """
+        Returns (pull request json, list of commit ids).
         """
         with self.db as cursor:
             try:
                 [[pr_json, commits_json]] = cursor.execute("""
-                    SELECT pr_json, commits_json FROM pull_requests
-                    WHERE project = ? AND id = ?;
-                """, (self.github_repo_name, pull_request_id))
-                return (
-                    (json.loads(pr_json),
-                     [c_id.encode() for c_id in json.loads(commits_json)]),
-                    True
-                )
+                    SELECT pr_json, commits_json
+                    FROM pull_requests
+                    WHERE
+                        project = ? AND
+                        json_extract(pr_json, '$.merge_commit_sha') = ?;
+                """, (self.github_repo_name, pull_request_commit.decode()))
+                return (json.loads(pr_json),
+                        [c_id.encode() for c_id in json.loads(commits_json)])
             except ValueError:
-                pass
-            return self._fetch_pr(pull_request_id, cursor), False
+                raise KeyError("no pull request found for that commit")
 
     def object(self, object_id: bytes) -> dict:
         try:
@@ -251,41 +340,6 @@ class GithubCache:
             except KeyError:
                 pass
             return self._fetch_blob(blob_id, cursor), False
-
-    def _fetch_pr(self, pull_request_id: int, cursor) -> (dict, list[bytes]):
-        """
-        Fetches a PR and all it scommits and returns a tuple of (the pull
-        request json, the list of the pr's commit ids).
-        """
-        while True:
-            try:
-                github_pull_request = self.github_repo.get_pull(pull_request_id)
-                raw_data: dict = github_pull_request.raw_data
-                break
-            except RateLimitExceededException:
-                self._wait_for_rate_limit()
-
-        # the paginated list class in the github library is pretty fragile
-        # against errors during iteration, so get the pages all at once
-        while True:
-            try:
-                commits = [c.sha for c in github_pull_request.get_commits()]
-                break
-            except RateLimitExceededException:
-                self._wait_for_rate_limit()
-
-        # save the PR and its list of commit ids in the database
-        cursor.execute("""
-            INSERT INTO pull_requests(project, id, pr_json, commits_json)
-            VALUES (?, ?, ?, ?);
-        """, (
-            self.github_repo_name,
-            pull_request_id,
-            json.dumps(raw_data),
-            json.dumps(commits)
-        ))
-
-        return raw_data, [c.encode() for c in commits]
 
     def _fetch_commit(self, commit_id: bytes, cursor) -> dict:
         """
@@ -360,19 +414,6 @@ class GithubCache:
                     break
 
 
-def detect_github_squash_commit(commit: Commit) -> int | None:
-    """
-    Returns the pull request number if this looks like a squash commit,
-    otherwise returns None.
-    """
-    if commit.committer != b"GitHub <noreply@github.com>":
-        return None  # squashes are committed by github
-    if len(commit.parents) > 1:
-        return None  # squashes aren't merge commits
-    pr = re.search(br'^[^\n]*\(#(\d+)\)\n', commit.message, flags=re.MULTILINE)
-    return pr and int(pr.group(1))
-
-
 def detect_original_commit(commit: Commit) -> bytes | None:
     """
     Returns the commit id of the original commit if this is an unsquashed
@@ -403,7 +444,6 @@ def recreate_commit(commit_json: dict) -> Commit:
     """
     Recreate a commit object approximately from github api json.
     """
-    date_format = "%Y-%m-%dT%H:%M:%SZ"
     commit = Commit()
     commit.parents = [p['sha'].encode() for p in commit_json['parents']]
     # leftover hack: adapt in case this is a "pull request commit" json object
@@ -415,14 +455,14 @@ def recreate_commit(commit_json: dict) -> Commit:
     commit.author = (f"{commit_json['author']['name']} "
                      f"<{commit_json['author']['email']}>".encode())
     author_time = datetime.strptime(commit_json['author']['date'],
-                                    date_format)
+                                    GITHUB_DATE_FORMAT)
     commit.author_time = int(author_time.timestamp())
     commit.author_timezone = 0
     commit.committer = (f"{commit_json['committer']['name']} "
                         f"<{commit_json['committer']['email']}"
                         f">".encode())
     commit_time = datetime.strptime(commit_json['committer']['date'],
-                                    date_format)
+                                    GITHUB_DATE_FORMAT)
     commit.commit_time = int(commit_time.timestamp())
     commit.commit_timezone = 0
     commit.tree = commit_json['tree']['sha'].encode()
@@ -507,27 +547,21 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
         unsquashed_mapping = {}
 
     commit_stack = []
-    known_pull_requests = set()
     for walk in tqdm(repo.get_walker(squashed_head),
                      desc="crawling squashed branch", unit="commit"):
         if walk.commit.id not in unsquashed_mapping:
             commit_stack.append(walk.commit.id)
-            pr_id = detect_github_squash_commit(walk.commit)
-            if pr_id is not None:
-                known_pull_requests.add(pr_id)
+
+    with tqdm(desc="fetching PRs", unit="pr") as fetch_pr_progress:
+        gh_db.update_pull_requests(fetch_pr_progress)
 
     head_commit_id = None
     rewrite_progress = tqdm(total=len(commit_stack),
                             desc="unsquashing ", unit="commit")
-    pr_progress = tqdm(total=len(known_pull_requests),
-                       desc="squashed prs", unit="pr")
-    fetch_pr_progress = tqdm(desc="fetching PRs", unit="pr")
     fetch_obj_progress = tqdm(desc="fetching missing objects", unit="obj")
 
     def close_progress_bars():
         rewrite_progress.close()
-        pr_progress.close()
-        fetch_pr_progress.close()
         fetch_obj_progress.close()
 
     try:
@@ -547,13 +581,12 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
                 current_commit = recreate_commit(gh_json)
                 reconstructed = True
 
-            pull_request_id = detect_github_squash_commit(current_commit)
-            if (
-                    pull_request_id is not None
-                    and pull_request_id not in known_pull_requests
-            ):
-                known_pull_requests.add(pull_request_id)
-                pr_progress.total += 1
+            pull_request = None
+            if len(current_commit.parents) < 2:
+                try:
+                    pull_request = gh_db.pull_request(current_commit_id)
+                except KeyError:
+                    pass
 
             # parents of this commit need to be processed first
             parents_to_enqueue = [
@@ -567,16 +600,9 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
                 rewrite_progress.total += len(parents_to_enqueue)
                 continue
 
-            if pull_request_id is not None:
+            if pull_request is not None:
                 must_rewrite = True
-                (pr_json, pr_commits), was_cached = (
-                    gh_db.pull_request(pull_request_id))
-                if not was_cached:
-                    fetch_pr_progress.update(1)
-                    fetch_pr_progress.refresh()
-                # github also calls squash commits "merge commit"
-                assert current_commit_id == pr_json['merge_commit_sha'].encode()
-                # TODO: what if it isn't there? what if it doesn't match?
+                (pr_json, pr_commits) = pull_request
 
                 # ensure that all the PR's commits exist beforehand
                 merge_tip = pr_json['head']['sha'].encode()
@@ -595,7 +621,6 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
                 # convert this PR into a merge commit
                 current_commit.parents = [*current_commit.parents, merge_tip]
                 current_commit.committer = unsquashed_committer
-                pr_progress.update(1)
 
             # remap parent commits
             rewritten_parents = [
