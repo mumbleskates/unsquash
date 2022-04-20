@@ -232,6 +232,8 @@ class GithubCache:
                         break
                     except RateLimitExceededException:
                         self._wait_for_rate_limit()
+                if not page:
+                    return  # end of history
                 yield from page
 
         for pull in all_pulls():
