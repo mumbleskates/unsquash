@@ -246,7 +246,7 @@ class GithubCache:
                             SELECT COUNT(*) > 0
                             FROM pull_requests
                             WHERE project = ? AND id = ?;
-                        """, (self.github_repo_name, pull.id))
+                        """, (self.github_repo_name, pull.number))
                         if (
                                 already_have or
                                 pull.state != 'closed' or
@@ -267,7 +267,7 @@ class GithubCache:
                             VALUES (?, ?, ?, ?);
                         """, (
                             self.github_repo_name,
-                            pull.id,
+                            pull.number,
                             json.dumps(raw_data),
                             json.dumps(commits)
                         ))
