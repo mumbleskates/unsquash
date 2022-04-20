@@ -252,7 +252,7 @@ class GithubCache:
                         if (
                                 already_have or
                                 pull.state != 'closed' or
-                                not pull.merged
+                                pull.merged_at is None
                         ):
                             break  # only store new, merged PRs
                         raw_data: dict = pull.raw_data
