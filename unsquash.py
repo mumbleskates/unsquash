@@ -586,13 +586,6 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
                 current_commit = recreate_commit(gh_json)
                 reconstructed = True
 
-            pull_request = None
-            if len(current_commit.parents) < 2:
-                try:
-                    pull_request = gh_db.pull_request(current_commit_id)
-                except KeyError:
-                    pass
-
             # parents of this commit need to be processed first
             parents_to_enqueue = [
                 parent_id for parent_id in current_commit.parents
@@ -605,6 +598,13 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
                 rewrite_progress.total += len(parents_to_enqueue)
                 continue
 
+            pull_request = None
+            if len(current_commit.parents) < 2:
+                try:
+                    pull_request = gh_db.pull_request(current_commit_id)
+                except KeyError:
+                    pass
+
             if pull_request is not None:
                 must_rewrite = True
                 (pr_json, pr_commits) = pull_request
@@ -612,20 +612,25 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
                 # ensure that all the PR's commits exist beforehand
                 merge_tip = pr_json['head']['sha'].encode()
                 assert merge_tip == pr_commits[-1]
-                if merge_tip not in unsquashed_mapping:
-                    # these commits must be rewritten before we can write the
-                    # unsquashed merge PR. we push the PR commit back on the
-                    # stack and will revisit it again when its attendant
-                    # commits are all in.
-                    commit_stack.append(current_commit_id)
-                    commit_stack.append(merge_tip)
-                    rewrite_progress.total += 1  # regress 1 commit
-                    continue
-                assert all(pr_c in unsquashed_mapping for pr_c in pr_commits)
+                if merge_tip == current_commit_id:
+                    # this was a fast-forward merge, not a squash commit.
+                    pass  # there is nothing for us to do.
+                else:
+                    if merge_tip not in unsquashed_mapping:
+                        # these commits must be rewritten before we can write
+                        # the unsquashed merge PR. we push the PR commit back on
+                        # the stack and will revisit it again when its attendant
+                        # commits are all in.
+                        commit_stack.append(current_commit_id)
+                        commit_stack.append(merge_tip)
+                        rewrite_progress.total += 1  # regress 1 commit
+                        continue
+                    assert all(pr_c in unsquashed_mapping
+                               for pr_c in pr_commits)
 
-                # convert this PR into a merge commit
-                current_commit.parents = [*current_commit.parents, merge_tip]
-                current_commit.committer = unsquashed_committer
+                    # convert this PR into a merge commit
+                    current_commit.parents.append(merge_tip)
+                    current_commit.committer = unsquashed_committer
 
             # remap parent commits
             rewritten_parents = [
