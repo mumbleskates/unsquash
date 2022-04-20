@@ -417,6 +417,9 @@ class GithubCache:
                 progress.refresh()
                 if waited > time_to_wait:
                     break
+        print()
+        print()
+        print()
 
 
 def detect_original_commit(commit: Commit) -> bytes | None:
