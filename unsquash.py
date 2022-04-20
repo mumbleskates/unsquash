@@ -281,7 +281,7 @@ class GithubCache:
         with self.db as cursor:
             cursor.execute("""
                 INSERT INTO updates(project, update_timestamp) VALUES (?, ?);
-            """, (self.github_repo_name, new_updated,))
+            """, (self.github_repo_name, new_updated.timestamp(),))
 
     def pull_request(self, pull_request_commit: bytes) -> (dict, list[bytes]):
         """
