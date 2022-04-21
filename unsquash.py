@@ -315,7 +315,7 @@ class GithubCache:
 
     def commit(self, commit_id: bytes) -> (dict, bool):
         """
-        Returns (commit json, bool of whether this object was cached.
+        Returns (commit json, bool of whether this object was cached).
         """
         with self.db as cursor:
             try:
@@ -326,7 +326,7 @@ class GithubCache:
 
     def tree(self, tree_id: bytes) -> (dict, bool):
         """
-        Returns (tree json, bool of whether this object was cached.
+        Returns (tree json, bool of whether this object was cached).
         """
         with self.db as cursor:
             try:
@@ -337,7 +337,7 @@ class GithubCache:
 
     def blob(self, blob_id: bytes) -> (dict, bool):
         """
-        Returns (blob json, bool of whether this object was cached.
+        Returns (blob json, bool of whether this object was cached).
         """
         with self.db as cursor:
             try:
