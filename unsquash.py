@@ -223,9 +223,12 @@ class GithubCache:
         new_updated: datetime = datetime.min  # new last-updated timestamp
 
         def all_pulls() -> Generator[PullRequest]:
+            nonlocal fetched_multiple_pages
             pulls = self.github_repo.get_pulls(
                 state='closed', sort='updated', direction='desc')
             for page_num in count():
+                if page_num > 0:
+                    fetched_multiple_pages = True
                 while True:
                     try:
                         page = pulls.get_page(page_num)
@@ -236,51 +239,67 @@ class GithubCache:
                     return  # end of history
                 yield from page
 
-        done = False
-        for pull in all_pulls():
-            update_progress.update(1)
-            while True:
-                try:
-                    with self.db as cursor:
-                        if pull.updated_at < target_timestamp:
-                            done = True
-                            break
-                        new_updated = max(new_updated, pull.updated_at)
-                        [[already_have]] = cursor.execute("""
-                            SELECT COUNT(*) > 0
-                            FROM pull_requests
-                            WHERE project = ? AND id = ?;
-                        """, (self.github_repo_name, pull.number))
-                        if (
-                                already_have or
-                                pull.state != 'closed' or
-                                pull.merged_at is None
-                        ):
-                            break  # only store new, merged PRs
-                        raw_data: dict = pull.raw_data
-                        commits: list[str] = [
-                            c.sha for c in pull.get_commits()
-                        ]
-                        cursor.execute("""
-                            INSERT INTO pull_requests(
-                                project,
-                                id,
-                                pr_json,
-                                commits_json
-                            )
-                            VALUES (?, ?, ?, ?);
-                        """, (
-                            self.github_repo_name,
-                            pull.number,
-                            json.dumps(raw_data),
-                            json.dumps(commits)
-                        ))
-                except RateLimitExceededException:
-                    self._wait_for_rate_limit()
-                    continue
+        while True:
+            # scroll through pull requests from most to least recently updated
+            # until we see one at least as stale as our last update timestamp.
+            done = False
+            fetched_multiple_pages = False
+            for pull in all_pulls():
+                update_progress.update(1)
+                while True:
+                    try:
+                        with self.db as cursor:
+                            if pull.updated_at < target_timestamp:
+                                done = True
+                                break
+                            new_updated = max(new_updated, pull.updated_at)
+                            [[already_have]] = cursor.execute("""
+                                SELECT COUNT(*) > 0
+                                FROM pull_requests
+                                WHERE project = ? AND id = ?;
+                            """, (self.github_repo_name, pull.number))
+                            if (
+                                    already_have or
+                                    pull.state != 'closed' or
+                                    pull.merged_at is None
+                            ):
+                                break  # only store new, merged PRs
+                            raw_data: dict = pull.raw_data
+                            commits: list[str] = [
+                                c.sha for c in pull.get_commits()
+                            ]
+                            cursor.execute("""
+                                INSERT INTO pull_requests(
+                                    project,
+                                    id,
+                                    pr_json,
+                                    commits_json
+                                )
+                                VALUES (?, ?, ?, ?);
+                            """, (
+                                self.github_repo_name,
+                                pull.number,
+                                json.dumps(raw_data),
+                                json.dumps(commits)
+                            ))
+                    except RateLimitExceededException:
+                        self._wait_for_rate_limit()
+                        continue
+                    break
+                if done:
+                    break
+
+            # Because we are paginating backwards in time while recently updated
+            # pull requests get pushed up to the first page, we might actually
+            # miss some that get updated while we are fetching if we fetched
+            # more than one page. Therefore we should repeat this process until
+            # we see a non-new pull request on the first page of results.
+            if fetched_multiple_pages:
+                target_timestamp = new_updated
+                continue
+            else:
                 break
-            if done:
-                break
+
         with self.db as cursor:
             cursor.execute("""
                 INSERT INTO updates(project, update_timestamp) VALUES (?, ?);
