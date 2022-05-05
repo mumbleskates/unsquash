@@ -461,9 +461,9 @@ def map_unsquashed(repo: Repo, heads: list[bytes]) -> dict[bytes, bytes]:
         original_commit_id = detect_original_commit(walk.commit)
         if original_commit_id:
             unsquashed_mapping[original_commit_id] = walk.commit.id
-        else:
-            # not rewritten, commit is unchanged
-            unsquashed_mapping[walk.commit.id] = walk.commit.id
+        # if a commit is not rewritten in unsquashed history, or if an
+        # already-unsquashed commit is referenced, it should not be changed.
+        unsquashed_mapping[walk.commit.id] = walk.commit.id
     return unsquashed_mapping
 
 
