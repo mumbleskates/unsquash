@@ -164,8 +164,6 @@ class GithubCache:
             while True:
                 try:
                     self.github_repo = self.github.get_repo(github_repo_name)
-                    self.github_repo.get_pulls(state="closed", sort="updated",
-                                               direction="desc")
                     break
                 except RateLimitExceededException:
                     self._wait_for_rate_limit()
