@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from base64 import b64decode
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from getpass import getpass
 from itertools import count
 import json
@@ -215,10 +215,12 @@ class GithubCache:
             """, (self.github_repo_name,))
 
         if last_updated is None:
-            target_timestamp = datetime.min
+            target_timestamp = datetime.min.replace(tzinfo=timezone.utc)
         else:
-            target_timestamp = datetime.fromtimestamp(last_updated)
-        new_updated: datetime = datetime.min  # new last-updated timestamp
+            target_timestamp = datetime.utcfromtimestamp(last_updated).replace(
+                tzinfo=timezone.utc)
+        # new last-updated timestamp
+        new_updated: datetime = datetime.min.replace(tzinfo=timezone.utc)
 
         def all_pulls() -> Generator[PullRequest]:
             nonlocal fetched_multiple_pages
@@ -247,10 +249,12 @@ class GithubCache:
                 while True:
                     try:
                         with self.db as cursor:
-                            if pull.updated_at < target_timestamp:
+                            pull_updated_at = pull.updated_at.replace(
+                                tzinfo=timezone.utc)
+                            if pull_updated_at < target_timestamp:
                                 done = True
                                 break
-                            new_updated = max(new_updated, pull.updated_at)
+                            new_updated = max(new_updated, pull_updated_at)
                             [[already_have]] = cursor.execute("""
                                 SELECT COUNT(*) > 0
                                 FROM pull_requests
@@ -479,15 +483,17 @@ def recreate_commit(commit_json: dict) -> Commit:
     commit.message = commit_json['message'].encode()
     commit.author = (f"{commit_json['author']['name']} "
                      f"<{commit_json['author']['email']}>".encode())
-    author_time = datetime.strptime(commit_json['author']['date'],
-                                    GITHUB_DATE_FORMAT)
+    author_time = datetime.strptime(
+        commit_json['author']['date'], GITHUB_DATE_FORMAT
+    ).replace(tzinfo=timezone.utc)
     commit.author_time = int(author_time.timestamp())
     commit.author_timezone = 0
     commit.committer = (f"{commit_json['committer']['name']} "
                         f"<{commit_json['committer']['email']}"
                         f">".encode())
-    commit_time = datetime.strptime(commit_json['committer']['date'],
-                                    GITHUB_DATE_FORMAT)
+    commit_time = datetime.strptime(
+        commit_json['committer']['date'], GITHUB_DATE_FORMAT
+    ).replace(tzinfo=timezone.utc)
     commit.commit_time = int(commit_time.timestamp())
     commit.commit_timezone = 0
     commit.tree = commit_json['tree']['sha'].encode()
