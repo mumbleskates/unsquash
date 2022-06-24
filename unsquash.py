@@ -38,7 +38,30 @@ instant, since when it is up to date it refers to the exact same tree as the
 unsquashed branch.
 """
 
-GITHUB_DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+INFINITE_PAST = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def string_to_datetime(s: str) -> datetime:
+    return datetime_as_utc(datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ"))
+
+
+def number_to_datetime(n: float | int) -> datetime:
+    return datetime_as_utc(datetime.utcfromtimestamp(n))
+
+
+def datetime_to_float(d: datetime) -> float:
+    assert d.tzinfo is timezone.utc
+    return d.timestamp()
+
+
+def datetime_to_int(d: datetime) -> int:
+    assert d.tzinfo is timezone.utc
+    return int(d.timestamp())
+
+
+def datetime_as_utc(d: datetime) -> datetime:
+    return d.replace(tzinfo=timezone.utc)
 
 
 def main():
@@ -215,12 +238,11 @@ class GithubCache:
             """, (self.github_repo_name,))
 
         if last_updated is None:
-            target_timestamp = datetime.min.replace(tzinfo=timezone.utc)
+            target_timestamp = INFINITE_PAST
         else:
-            target_timestamp = datetime.utcfromtimestamp(last_updated).replace(
-                tzinfo=timezone.utc)
+            target_timestamp = number_to_datetime(last_updated)
         # new last-updated timestamp
-        new_updated: datetime = datetime.min.replace(tzinfo=timezone.utc)
+        new_updated: datetime = INFINITE_PAST
 
         def all_pulls() -> Generator[PullRequest]:
             nonlocal fetched_multiple_pages
@@ -249,8 +271,7 @@ class GithubCache:
                 while True:
                     try:
                         with self.db as cursor:
-                            pull_updated_at = pull.updated_at.replace(
-                                tzinfo=timezone.utc)
+                            pull_updated_at = datetime_as_utc(pull.updated_at)
                             if pull_updated_at < target_timestamp:
                                 done = True
                                 break
@@ -305,7 +326,7 @@ class GithubCache:
         with self.db as cursor:
             cursor.execute("""
                 INSERT INTO updates(project, update_timestamp) VALUES (?, ?);
-            """, (self.github_repo_name, new_updated.timestamp(),))
+            """, (self.github_repo_name, datetime_to_float(new_updated),))
 
     def pull_request(self, pull_request_commit: bytes) -> (dict, list[bytes]):
         """
@@ -483,18 +504,14 @@ def recreate_commit(commit_json: dict) -> Commit:
     commit.message = commit_json['message'].encode()
     commit.author = (f"{commit_json['author']['name']} "
                      f"<{commit_json['author']['email']}>".encode())
-    author_time = datetime.strptime(
-        commit_json['author']['date'], GITHUB_DATE_FORMAT
-    ).replace(tzinfo=timezone.utc)
-    commit.author_time = int(author_time.timestamp())
+    author_time = string_to_datetime(commit_json['author']['date'])
+    commit.author_time = datetime_to_int(author_time)
     commit.author_timezone = 0
     commit.committer = (f"{commit_json['committer']['name']} "
                         f"<{commit_json['committer']['email']}"
                         f">".encode())
-    commit_time = datetime.strptime(
-        commit_json['committer']['date'], GITHUB_DATE_FORMAT
-    ).replace(tzinfo=timezone.utc)
-    commit.commit_time = int(commit_time.timestamp())
+    commit_time = string_to_datetime(commit_json['committer']['date'])
+    commit.commit_time = datetime_to_int(commit_time)
     commit.commit_timezone = 0
     commit.tree = commit_json['tree']['sha'].encode()
     return commit
