@@ -654,7 +654,9 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
 
                 # ensure that all the PR's commits exist beforehand
                 merge_tip = pr_json['head']['sha'].encode()
-                assert merge_tip == pr_commits[-1]
+                # it's possible for a (bugged?) github PR to have zero commits.
+                if pr_commits:
+                    assert merge_tip == pr_commits[-1]
                 if merge_tip == current_commit_id:
                     # this was a fast-forward merge, not a squash commit.
                     pass  # there is nothing for us to do.
