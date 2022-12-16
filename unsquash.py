@@ -10,7 +10,7 @@ import re
 import sqlite3
 import sys
 import time
-from typing import Generator
+from typing import Callable, Generator
 
 from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import Repo
@@ -37,7 +37,6 @@ all your files. Not only that, but checking out the unsquashed branch is almost
 instant, since when it is up to date it refers to the exact same tree as the
 unsquashed branch.
 """
-
 
 INFINITE_PAST = datetime.min.replace(tzinfo=timezone.utc)
 
@@ -346,49 +345,46 @@ class GithubCache:
             except ValueError:
                 raise KeyError("no pull request found for that commit")
 
-    def object(self, object_id: bytes) -> dict:
-        try:
-            [[json_data]] = self.db.execute("""
-                SELECT json FROM objects WHERE id = ?;
-            """, (object_id.decode(),))
-            return json.loads(json_data)
-        except ValueError:
-            raise KeyError("commit not in database", object_id)
-
     def commit(self, commit_id: bytes) -> (dict, bool):
         """
         Returns (commit json, bool of whether this object was cached).
         """
-        with self.db as cursor:
-            try:
-                return self.object(commit_id), True
-            except KeyError:
-                pass
-            return self._fetch_commit(commit_id, cursor), False
+        return self._object(commit_id, self._fetch_commit)
 
     def tree(self, tree_id: bytes) -> (dict, bool):
         """
         Returns (tree json, bool of whether this object was cached).
         """
-        with self.db as cursor:
-            try:
-                return self.object(tree_id), True
-            except KeyError:
-                pass
-            return self._fetch_tree(tree_id, cursor), False
+        return self._object(tree_id, self._fetch_tree)
 
     def blob(self, blob_id: bytes) -> (dict, bool):
         """
         Returns (blob json, bool of whether this object was cached).
         """
-        with self.db as cursor:
-            try:
-                return self.object(blob_id), True
-            except KeyError:
-                pass
-            return self._fetch_blob(blob_id, cursor), False
+        return self._object(blob_id, self._fetch_blob)
 
-    def _fetch_commit(self, commit_id: bytes, cursor) -> dict:
+    def _object(self, object_id: bytes,
+                fallback: Callable[[bytes], (str, dict)]) -> (dict, bool):
+        """
+        Returns (object json, bool of whether this object was cached)
+        """
+        try:
+            [[json_data]] = self.db.execute("""
+                SELECT json FROM objects WHERE id = ?;
+            """, (object_id.decode(),))
+            return json.loads(json_data), True
+        except ValueError:
+            pass  # object not present in db, fetch it from the fallback instead
+        sha, result = fallback(object_id)
+        assert sha == object_id.decode(), (
+            f"bad data from github for object {object_id}")
+        with self.db as cursor:
+            cursor.execute("""
+                INSERT INTO objects(id, json) VALUES (?, ?);
+            """, (sha, json.dumps(result)))
+        return result, False
+
+    def _fetch_commit(self, commit_id: bytes) -> (str, dict):
         """
         Fetches a commit from the API and returns it.
         """
@@ -396,52 +392,37 @@ class GithubCache:
             try:
                 github_commit = self.github_repo.get_git_commit(
                     commit_id.decode())
-                assert github_commit.sha.encode() == commit_id, (
-                    f"bad data from github for commit {commit_id}")
                 raw_data: dict = github_commit.raw_data
                 break
             except RateLimitExceededException:
                 self._wait_for_rate_limit()
-        cursor.execute("""
-            INSERT INTO objects(id, json) VALUES (?, ?);
-        """, (github_commit.sha, json.dumps(raw_data)))
-        return raw_data
+        return github_commit.sha, raw_data
 
-    def _fetch_tree(self, tree_id, cursor) -> dict:
+    def _fetch_tree(self, tree_id: bytes) -> (str, dict):
         """
         Fetches a tree from the API and returns it.
         """
         while True:
             try:
                 github_tree = self.github_repo.get_git_tree(tree_id.decode())
-                assert github_tree.sha.encode() == tree_id, (
-                    f"bad data from github for tree {tree_id}")
                 raw_data: dict = github_tree.raw_data
                 break
             except RateLimitExceededException:
                 self._wait_for_rate_limit()
-        cursor.execute("""
-            INSERT INTO objects(id, json) VALUES (?, ?);
-        """, (github_tree.sha, json.dumps(raw_data)))
-        return raw_data
+        return github_tree.sha, raw_data
 
-    def _fetch_blob(self, blob_id, cursor) -> dict:
+    def _fetch_blob(self, blob_id: bytes) -> (str, dict):
         """
         Fetches a blob from the API and returns it.
         """
         while True:
             try:
                 github_blob = self.github_repo.get_git_blob(blob_id.decode())
-                assert github_blob.sha.encode() == blob_id, (
-                    f"bad data from github for blob {blob_id}")
                 raw_data: dict = github_blob.raw_data
                 break
             except RateLimitExceededException:
                 self._wait_for_rate_limit()
-        cursor.execute("""
-            INSERT INTO objects(id, json) VALUES (?, ?);
-        """, (github_blob.sha, json.dumps(raw_data)))
-        return raw_data
+        return github_blob.sha, raw_data
 
     def _wait_for_rate_limit(self) -> None:
         rate_limit = self.github.get_rate_limit()
