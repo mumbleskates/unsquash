@@ -35,7 +35,7 @@ only new commits from the repository! This gives a complete accounting of what
 actually happened, complete with a more comprehensive 'git blame' output for
 all your files. Not only that, but checking out the unsquashed branch is almost
 instant, since when it is up to date it refers to the exact same tree as the
-unsquashed branch.
+squashed branch it was created from.
 """
 
 INFINITE_PAST = datetime.min.replace(tzinfo=timezone.utc)
