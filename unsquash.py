@@ -6,16 +6,21 @@ from datetime import datetime, timedelta, timezone
 from getpass import getpass
 from itertools import count
 import json
+import logging
 import re
 import sqlite3
 import sys
 import time
-from typing import Callable, Generator
+from typing import Callable, Generator, Optional
+from urllib.parse import urlparse
 
+from dulwich.client import (get_credentials_from_store, get_transport_and_path,
+                            GitClient, Urllib3HttpGitClient)
 from dulwich.objects import Blob, Commit, Tree
 from dulwich.repo import Repo
 from github import Github, PullRequest, RateLimitExceededException
 from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 __doc__ = """
 -- GitHub Unsquasher --
@@ -39,6 +44,8 @@ squashed branch it was created from.
 """
 
 INFINITE_PAST = datetime.min.replace(tzinfo=timezone.utc)
+
+log = logging.getLogger(__name__)
 
 
 def string_to_datetime(s: str) -> datetime:
@@ -98,6 +105,15 @@ def main():
                             "specifies long-form refs, like "
                             "'refs/heads/unsquash-master' instead of "
                             "'unsquash-master'.")
+    parser.add_argument("--git_remote_url", type=str,
+                        help="The git remote URL that all git fetching will be "
+                             "done from.")
+    parser.add_argument("--squashed_remote", type=str,
+                        help="The name of the remote in the repository to "
+                             "fetch git data from. Defaults to the upstream "
+                             "branch of the unsquashed branch, if any.")
+    parser.add_argument("--git_credentials_file", type=str,
+                        help="Path to the stored git credentials file for http")
     parser.add_argument("--also_map_branch", action='append', default=[],
                         help="Additional branches to map before beginning the "
                              "unsquash process. All mapped commits will be "
@@ -121,9 +137,54 @@ def main():
     unsquashed_committer = f"UnsquashBot <{args.bot_email}>".encode()
 
     repo = Repo(args.repo)
+    repo_config = repo.get_config()
 
     if args.squashed_branch is None and args.squashed_ref is None:
         args.squashed_branch = "master"  # default to master branch
+
+    if args.fetch_squashed_branch:
+        if args.squashed_branch is None:
+            print("--squashed_ref is not compatible with "
+                  "--fetch_squashed_branch.")
+            sys.exit(1)
+
+    if args.git_remote_url is None:
+        if args.squashed_remote is None:
+            try:
+                args.squashed_remote = repo_config.get(
+                    ('branch', args.squashed_branch), 'remote')
+            except KeyError:
+                print("Squashed branch has no configured remote")
+            sys.exit(1)
+        try:
+            args.git_remote_url = repo_config.get(
+                ('remote', args.squashed_remote),
+                'url').decode()
+        except KeyError:
+            print(f"Repo has no remote {args.squashed_remote:r}")
+            sys.exit(1)
+
+    parsed_url = urlparse(args.git_remote_url)
+    if parsed_url.scheme in ("http", "https"):
+        username, password = get_credentials_from_store(
+            parsed_url.scheme,
+            parsed_url.hostname,
+            fnames=(
+                None if args.git_credentials_file is None else [
+                    args.git_credentials_file
+                ]
+            ),
+        )
+        remote_git_client = Urllib3HttpGitClient(
+            args.git_remote_url,
+            username=username,
+            password=password,
+        )
+        path = parsed_url.path
+    else:
+        remote_git_client, path = get_transport_and_path(args.git_remote_url)
+
+    # TODO(widders): fetch the branch if args.fetch_squashed_branch
 
     if args.squashed_branch is not None:
         squashed_ref = f"refs/heads/{args.squashed_branch}".encode()
@@ -162,11 +223,12 @@ def main():
             with open(args.token_file, 'r') as f:
                 token = f.read().strip()
 
-    with GithubCache(
-            db_path=args.pr_db,
-            github_repo_name=args.github_repo,
-            github_token=token) as gh_db:
+    with logging_redirect_tqdm(), GithubCache(db_path=args.pr_db,
+                                              github_repo_name=args.github_repo,
+                                              github_token=token) as gh_db:
         rebuild_history(repo=repo, gh_db=gh_db,
+                        remote=remote_git_client,
+                        remote_path=path,
                         unsquashed_committer=unsquashed_committer,
                         squashed_head=squashed_head,
                         unsquashed_ref=unsquashed_ref,
@@ -327,7 +389,8 @@ class GithubCache:
                 INSERT INTO updates(project, update_timestamp) VALUES (?, ?);
             """, (self.github_repo_name, datetime_to_float(new_updated),))
 
-    def pull_request(self, pull_request_commit: bytes) -> (dict, list[bytes]):
+    def pull_request(self, pull_request_commit: bytes) -> Optional[
+        (dict, list[bytes])]:
         """
         Returns (pull request json, list of commit ids).
         """
@@ -343,7 +406,7 @@ class GithubCache:
                 return (json.loads(pr_json),
                         [c_id.encode() for c_id in json.loads(commits_json)])
             except ValueError:
-                raise KeyError("no pull request found for that commit")
+                pass
 
     def commit(self, commit_id: bytes) -> (dict, bool):
         """
@@ -553,7 +616,8 @@ def download_tree(repo: Repo, gh_db: GithubCache, tree_id: bytes,
     repo.object_store.add_object(recreate_tree(gh_tree))
 
 
-def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
+def rebuild_history(repo: Repo, remote: GitClient, remote_path: str,
+                    gh_db: GithubCache, unsquashed_committer: bytes,
                     squashed_head: bytes, unsquashed_ref: bytes,
                     also_map_refs: list[bytes]) -> None:
     map_heads = []
@@ -570,19 +634,97 @@ def rebuild_history(repo: Repo, gh_db: GithubCache, unsquashed_committer: bytes,
         except KeyError:
             print(f"Ref {ref.decode()} not found in the repo")
 
-    if map_heads:
-        unsquashed_mapping = map_unsquashed(repo=repo, heads=map_heads)
-    else:
-        unsquashed_mapping = {}
-
-    commit_stack = []
-    for walk in tqdm(repo.get_walker(squashed_head),
-                     desc="crawling squashed branch", unit="commit"):
-        if walk.commit.id not in unsquashed_mapping:
-            commit_stack.append(walk.commit.id)
-
     with tqdm(desc="fetching PRs", unit="pr") as fetch_pr_progress:
         gh_db.update_pull_requests(fetch_pr_progress)
+
+    # mapping of {squashed commit id: unsquashed commit id}
+    unsquashed_mapping = map_unsquashed(repo=repo, heads=map_heads)
+    # commit_stack will hold all the commits to be unsquashed, the ones with few
+    # to no unprocessed ancestors at the end to be popped off first.
+    commit_stack = []
+    # pending_commits will hold the same values as commit_stack.
+    pending_commits = set()
+    # already_processed_tips holds the set of squashed commits we neither need
+    # to fetch nor process again, as they are already unsquashed or queued up.
+    already_processed_tips = []
+    for commit in map_heads:
+        already_processed_tips.append(commit)
+        already_processed_tips.append(detect_original_commit(commit))
+
+    # tips that are being processed this iteration
+    new_tips = [squashed_head]
+    while True:
+        # the set of commit ids we plan to fetch from the remote
+        new_squash_commits = set()
+        tips_to_fetch = set()
+        for walk in tqdm(repo.get_walker(new_tips,
+                                         exclude=already_processed_tips),
+                         desc="crawling new commits", unit="commit"):
+            if (
+                    walk.commit.id in pending_commits or
+                    walk.commit.id in unsquashed_mapping
+            ):
+                continue  # TODO(widders): this shouldn't happen i think?
+            commit_stack.append(walk.commit.id)
+            pending_commits.add(walk.commit.id)
+            # Check if this commit is a squashed pull request
+            if len(walk.commit.parents) >= 2:
+                continue  # it's a merge commit
+            pull_request = gh_db.pull_request(walk.commit.id)
+            if pull_request is None:
+                continue  # not the merge commit of a known pull request
+            (pr_json, pr_commits) = pull_request
+            merge_tip = pr_json['head']['sha'].encode()
+            if (
+                    # this pull request isn't a simple fast-forward
+                    merge_tip != walk.commit.id and
+                    # this isn't already a commit we have queued up
+                    merge_tip not in pending_commits and
+                    # this isn't a commit that was previously unsquashed
+                    merge_tip not in unsquashed_mapping
+            ):
+                # we will try to fetch the pr's contents from the remote
+                if merge_tip not in new_squash_commits:
+                    new_squash_commits.add(merge_tip)
+                    if merge_tip not in repo:
+                        tips_to_fetch.add(merge_tip)
+
+        # we've now combed over these commits for squashed merge commits
+        already_processed_tips.extend(new_tips)
+
+        if tips_to_fetch:
+            log.info(f"attempting to fetch {len(tips_to_fetch)} out of "
+                     f"{len(new_squash_commits)} missing squashed refs")
+
+            def determine_wants(sha_dict: dict[bytes, bytes],
+                                _depth: Optional[int] = None) -> list[bytes]:
+                return [
+                    commit
+                    for _ref, commit in sha_dict.items()
+                    if commit in tips_to_fetch
+                ]
+
+            # fetch as many of those tips as possible from the repo
+            fetch_result = remote.fetch(remote_path, repo,
+                                        determine_wants=determine_wants,
+                                        progress=log.info)
+            # save the refs we wanted to keep
+            for ref, commit in fetch_result.refs.items():
+                if (
+                        commit in tips_to_fetch and
+                        commit in repo and
+                        ref not in repo.refs
+                ):
+                    repo.refs[ref] = commit
+
+        new_tips = [
+            commit
+            for commit in new_squash_commits
+            if commit in repo
+        ]
+        log.info(f"got {len(new_tips)} new refs")
+        if not new_tips:
+            break  # nothing more to do
 
     head_commit_id = None
     rewrite_progress = tqdm(total=len(commit_stack),
