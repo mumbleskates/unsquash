@@ -28,12 +28,15 @@ This tool rewrites git history for github-hosted repositories, rewriting the
 history as if your pull request squash commits were all merges instead and
 pulling in all the commits of those pull requests into this new branch.
 
-While the commits themselves cannot be exactly reproduced, they were going to be
-rewritten anyway, and the content of the repository is precisely the same. Every
-commit, even if its branch was long deleted or never present in your copy of the
-repo, has its files and trees exactly reproduced (assuming github's API is
-willing to serve the complete data; if you have file versions over 100MB that
-are not already in your repo, this might not work).
+Typically this functions by fetching the refs for the commits that were squashed
+instead of merged via git. Github saves these under "refs/pull/1234/head"; if
+they are not available this way, the data for those commits will be fetched from
+the github JSON REST API instead. When fetched via JSON this way, some details
+of the commits themselves cannot be exactly reproduced, but those commits were
+going to be rewritten anyway. The content of the repository is precisely the
+same. Every commit, even if its branch was long deleted or never present in your
+copy of the repo, has its files and trees exactly reproduced after a successful
+run.
 
 This tool can be rerun repeatedly, maintaining an unsquashed branch by updating
 only new commits from the repository! This gives a complete accounting of what
