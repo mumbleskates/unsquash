@@ -681,8 +681,8 @@ def rebuild_history(repo: Repo, remote: GitClient, remote_path: str,
                     # this isn't a commit that was previously unsquashed
                     merge_tip not in unsquashed_mapping
             ):
-                # we will try to fetch the pr's contents from the remote
                 certain_pr_merges[walk.commit.id] = merge_tip
+                # we will try to fetch the pr's contents from the remote
                 if merge_tip not in new_squash_commits:
                     new_squash_commits.add(merge_tip)
                     if merge_tip not in repo:
@@ -747,7 +747,10 @@ def rebuild_history(repo: Repo, remote: GitClient, remote_path: str,
 
     def unsquashed_parents_of_commit(commit_id: bytes) -> Iterable[bytes]:
         merge_tip = certain_pr_merges.get(commit_id)
-        commit = repo[commit_id]
+        try:
+            commit = repo[commit_id]
+        except KeyError:
+            return ()
         return chain(commit.parents, (merge_tip,) if merge_tip else ())
 
     # Start performing a topological sort of all the new squashed commits we
