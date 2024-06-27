@@ -783,6 +783,8 @@ def rebuild_history(repo: Repo, remote: GitClient, remote_path: str,
             commit_id = ready.pop()
             commit_stack.append(commit_id)
             for parent_id in unsquashed_parents_of_commit(commit_id):
+                if parent_id not in dependent:
+                    continue
                 current_children = dependent[parent_id]
                 if current_children == 1:
                     del dependent[parent_id]
