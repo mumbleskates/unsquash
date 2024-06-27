@@ -51,7 +51,7 @@ def string_to_datetime(s: str) -> datetime:
 
 
 def number_to_datetime(n: float | int) -> datetime:
-    return datetime_as_utc(datetime.utcfromtimestamp(n))
+    return datetime_as_utc(datetime.fromtimestamp(n, timezone.utc))
 
 
 def datetime_to_float(d: datetime) -> float:
@@ -486,14 +486,14 @@ class GithubCache:
 
     def _wait_for_rate_limit(self) -> None:
         rate_limit = self.github.get_rate_limit()
-        wait_start = datetime.utcnow()
+        wait_start = datetime.now(timezone.utc)
         time_to_wait = (rate_limit.core.reset - wait_start
                         + timedelta(seconds=10))
         with tqdm(desc="waiting for github API rate limit",
                   total=time_to_wait.total_seconds(), unit="s") as progress:
             while True:
                 time.sleep(1)
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 waited = now - wait_start
                 progress.n = min(waited.total_seconds(),
                                  time_to_wait.total_seconds())
