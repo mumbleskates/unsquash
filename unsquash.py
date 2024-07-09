@@ -719,6 +719,7 @@ def rebuild_history(repo: Repo, remote: GitClient, remote_path: str,
             fetch_result = remote.fetch(remote_path, repo,
                                         determine_wants=determine_wants,
                                         progress=progress)
+            if sys.stdout.isatty(): print()
             # save the refs we wanted to keep
             failed_to_fetch = 0
             not_stomped = 0
